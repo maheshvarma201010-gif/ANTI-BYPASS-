@@ -18,6 +18,11 @@ async def connect_to_mongo():
     await db.db.protected_links.create_index("user_id")
     await db.db.request_logs.create_index([("short_id", 1), ("timestamp", -1)])
 
+    # Verifications collection for Referrer validation
+    await db.db.verifications.create_index("token", unique=True)
+    await db.db.verifications.create_index([("ip", 1), ("short_id", 1)])
+    await db.db.verifications.create_index("created_at", expireAfterSeconds=settings.TOKEN_EXPIRY_SECONDS)
+
 async def close_mongo_connection():
     db.client.close()
 
