@@ -10,6 +10,7 @@ import httpx
 router = APIRouter()
 
 @router.get("/api")
+@router.get("/st")
 async def create_protected_link(
     request: Request,
     api: str = Query(...),

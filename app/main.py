@@ -46,6 +46,13 @@ async def direct_redirect(
 
     # 1. Initial Hit (no token)
     if not v:
+        # Bot handling: Allow bots to use 302 or 200 ok redirects
+        ua = request.headers.get("user-agent", "").lower()
+        is_bot = any(bot_name in ua for bot_name in ["telegram", "discord", "whatsapp", "bot", "crawler", "spider"])
+
+        if is_bot:
+            return RedirectResponse(url=link['original_url'])
+
         # Check if already blocked
         blocked = await db.verifications.find_one({"ip": ip, "short_id": short_id, "status": "blocked"})
         if blocked:
