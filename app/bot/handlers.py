@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from app.bot.bot import bot
 from app.models.database import get_database
 from app.schemas.models import ShortenerConfig, User
-from app.core.security import generate_api_key
+from app.core.security import generate_api_key, encrypt_url, decrypt_url
 from app.core.config import settings
 from datetime import datetime, timedelta
 import httpx
@@ -58,7 +58,7 @@ async def process_api_key(message: types.Message, state: FSMContext):
     data = await state.get_data()
     url = data['url']
 
-    # Validate the API key by trying to shorten a test URL
+    # Validate the API key
     test_url = "https://google.com"
     validate_url = f"{url}/api?api={api_key}&url={test_url}"
 
@@ -83,12 +83,15 @@ async def process_api_key(message: types.Message, state: FSMContext):
     db = get_database()
     telegram_id = str(message.from_user.id)
 
+    # Secure storage (encryption)
+    encrypted_api_key = encrypt_url(api_key)
+
     user_data = await db.users.find_one({"telegram_id": telegram_id})
     new_api_key = generate_api_key()
 
     config = {
         "base_url": url,
-        "api_key": api_key
+        "api_key": encrypted_api_key
     }
 
     if user_data:
@@ -158,14 +161,10 @@ async def cmd_stats(message: types.Message):
         return
 
     user_id_str = str(user['_id'])
-
-    # Get all short_ids for this user
     links = await db.protected_links.find({"user_id": user_id_str}).to_list(length=1000)
     short_ids = [l['short_id'] for l in links]
 
     total_links = len(short_ids)
-
-    # Statistics
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
     today_requests = await db.request_logs.count_documents({
@@ -185,7 +184,7 @@ async def cmd_stats(message: types.Message):
 
     referer_failures = await db.request_logs.count_documents({
         "short_id": {"$in": short_ids},
-        "reason": "referer_empty"
+        "reason": "referer_failed"
     })
 
     js_failures = await db.request_logs.count_documents({
