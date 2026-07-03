@@ -27,8 +27,7 @@ async def shutdown_db_client():
 async def direct_redirect(
     request: Request,
     short_id: str,
-    v: Optional[str] = Query(None),
-    final: Optional[int] = Query(None),
+    sig: Optional[str] = Query(None),
     db = Depends(get_database)
 ):
     link = await db.protected_links.find_one({"short_id": short_id})
@@ -45,7 +44,7 @@ async def direct_redirect(
     ip = request.client.host
 
     # 1. Initial Hit (no token)
-    if not v:
+    if not sig:
         # Bot handling: Allow bots to use 302 or 200 ok redirects
         ua = request.headers.get("user-agent", "").lower()
         is_bot = any(bot_name in ua for bot_name in ["telegram", "discord", "whatsapp", "bot", "crawler", "spider"])
@@ -77,7 +76,7 @@ async def direct_redirect(
 
         # Determine current base URL dynamically
         current_base = str(request.base_url).rstrip('/')
-        callback_url = f"{current_base}/{short_id}?v={token}"
+        callback_url = f"{current_base}/{short_id}?sig={token}"
 
         encrypted_api = user['config']['api_key']
         shortener_api = decrypt_url(encrypted_api)
@@ -114,89 +113,31 @@ async def direct_redirect(
         return HTMLResponse(content="<h1>⚠️ Service Temporarily Unavailable</h1>", status_code=503)
 
     # 2. Return from shortener
-    verification = await db.verifications.find_one({"token": v, "short_id": short_id, "ip": ip})
+    verification = await db.verifications.find_one({"token": sig, "short_id": short_id, "ip": ip})
     if not verification:
         return HTMLResponse(content="<h1>⚠️ Bypass Detected</h1>", status_code=403)
 
-    if verification['status'] == 'blocked':
+    if verification['status'] != 'pending':
         return HTMLResponse(content="<h1>⚠️ Bypass Detected</h1>", status_code=403)
 
     shortener_domain = urlparse(shortener_base).netloc
+    referer = request.headers.get("referer", "")
+    referer_host = urlparse(referer).netloc
 
-    if not final:
-        # Server-side Referer check on the first callback from shortener
-        referer = request.headers.get("referer", "")
-        if shortener_domain in referer:
-            await db.verifications.update_one(
-                {"token": v},
-                {"$set": {"server_verified": True}}
-            )
-
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Verifying...</title>
-            <script>
-                (function() {{
-                    const referrer = document.referrer;
-                    const allowedDomain = "{shortener_domain}";
-
-                    if (referrer && referrer.includes(allowedDomain)) {{
-                        window.location.href = window.location.href + "&final=1";
-                    }} else {{
-                        document.body.innerHTML = "<h1>⚠️ Bypass Detected</h1>";
-                    }}
-                }})();
-            </script>
-        </head>
-        <body>
-        </body>
-        </html>
-        """
-        return HTMLResponse(content=html_content)
-
-    # 3. Final Validation
-    # Here Referer will be our own site, so we check the flag we set in Step 2
-    if verification.get("server_verified"):
-        # Success
+    # Stricter hostname-based check
+    if referer_host and (referer_host == shortener_domain or referer_host.endswith("." + shortener_domain)):
+        # Referer valid - Grant access
         await db.verifications.update_one(
-            {"token": v},
+            {"token": sig},
             {"$set": {"status": "success", "validated_at": datetime.utcnow()}}
         )
-
-        # Log success
-        await db.request_logs.insert_one({
-            "short_id": short_id,
-            "timestamp": datetime.utcnow(),
-            "ip": ip,
-            "user_agent": request.headers.get("user-agent"),
-            "referer": request.headers.get("referer"),
-            "status": "success",
-            "type": "js_validated"
-        })
-
         return RedirectResponse(url=link['original_url'])
     else:
-        # Block
+        # Referer missing or invalid - Block access
         await db.verifications.update_one(
-            {"token": v},
+            {"token": sig},
             {"$set": {"status": "blocked", "blocked_at": datetime.utcnow()}}
         )
-
-        # Log block
-        await db.request_logs.insert_one({
-            "short_id": short_id,
-            "timestamp": datetime.utcnow(),
-            "ip": ip,
-            "user_agent": request.headers.get("user-agent"),
-            "referer": request.headers.get("referer"),
-            "status": "blocked",
-            "reason": "referer_failed"
-        })
-
         return HTMLResponse(content="<h1>⚠️ Bypass Detected</h1>", status_code=403)
 
 @app.get("/health")
