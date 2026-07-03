@@ -9,7 +9,6 @@ class Settings(BaseSettings):
 
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "antibypass"
-    REDIS_URL: str = "redis://localhost:6379/0"
 
     TELEGRAM_BOT_TOKEN: str = ""
     BASE_URL: str = "https://antibypass.koyeb.app"

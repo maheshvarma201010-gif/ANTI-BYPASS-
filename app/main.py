@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.security import generate_challenge_token, verify_challenge_token
 import httpx
 from datetime import datetime
+from bson import ObjectId
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -44,6 +45,14 @@ async def verify_challenge(request: Request, db = Depends(get_database)):
     token = data.get("token")
     referer = data.get("referer")
 
+    # Collect fingerprint data as requested (but simplified validation for now)
+    fingerprint = {
+        "user_agent": request.headers.get("user-agent"),
+        "language": data.get("language"),
+        "screen_size": data.get("screen_size"),
+        "timezone": data.get("timezone")
+    }
+
     if not verify_challenge_token(token, short_id):
         return JSONResponse(status_code=400, content={"status": "fail", "reason": "invalid_token"})
 
@@ -54,8 +63,9 @@ async def verify_challenge(request: Request, db = Depends(get_database)):
             "short_id": short_id,
             "timestamp": datetime.utcnow(),
             "ip": request.client.host,
-            "user_agent": request.headers.get("user-agent"),
+            "user_agent": fingerprint["user_agent"],
             "referer": referer,
+            "fingerprint": fingerprint,
             "status": "blocked",
             "reason": "referer_empty"
         })
@@ -65,13 +75,8 @@ async def verify_challenge(request: Request, db = Depends(get_database)):
     if not link:
          return JSONResponse(status_code=404, content={"status": "fail", "reason": "not_found"})
 
-    user = await db.users.find_one({"_id": link['user_id']}) if isinstance(link['user_id'], str) else await db.users.find_one({"_id": link['user_id']})
-    # Handle both string and ObjectId user_id
-    from bson import ObjectId
-    if isinstance(link['user_id'], str):
-        user = await db.users.find_one({"_id": ObjectId(link['user_id'])})
-    else:
-        user = await db.users.find_one({"_id": link['user_id']})
+    user_id = link['user_id']
+    user = await db.users.find_one({"_id": ObjectId(user_id)}) if isinstance(user_id, str) else await db.users.find_one({"_id": user_id})
 
     if not user or not user.get('config'):
         return JSONResponse(status_code=400, content={"status": "fail", "reason": "misconfigured"})
@@ -81,8 +86,9 @@ async def verify_challenge(request: Request, db = Depends(get_database)):
         "short_id": short_id,
         "timestamp": datetime.utcnow(),
         "ip": request.client.host,
-        "user_agent": request.headers.get("user-agent"),
+        "user_agent": fingerprint["user_agent"],
         "referer": referer,
+        "fingerprint": fingerprint,
         "status": "success"
     })
 
@@ -91,21 +97,17 @@ async def verify_challenge(request: Request, db = Depends(get_database)):
     shortener_api = user['config']['api_key']
     dest_url = link['original_url']
 
-    # Simple example of calling a common shortener API (like Shorte.st or generic ones)
-    # Most use: /api?api={key}&url={url}
     api_url = f"{shortener_base}/api?api={shortener_api}&url={dest_url}"
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(api_url)
+            resp = await client.get(api_url, timeout=10.0)
             if resp.status_code == 200:
                 result = resp.json()
-                # Assuming standard response {status: "success", short_url: "..."}
                 short_url = result.get("short_url") or result.get("shortenedUrl")
                 if short_url:
                     return {"status": "success", "redirect": short_url}
     except Exception:
         pass
 
-    # Fallback to direct redirect if shortener fails
     return {"status": "success", "redirect": dest_url}

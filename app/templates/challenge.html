@@ -49,46 +49,18 @@
         <div id="error-message"></div>
     </div>
 
+    <script src="/static/challenge.js"></script>
     <script>
-        const SHORT_ID = "{{ short_id }}";
-        const TOKEN = "{{ challenge_token }}";
-
-        async function runChallenge() {
-            const referer = document.referrer;
-            const errorMessage = document.getElementById('error-message');
-
-            try {
-                const response = await fetch('/verify', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        short_id: SHORT_ID,
-                        token: TOKEN,
-                        referer: referer
-                    })
-                });
-
-                const result = await response.json();
-
-                if (result.status === 'success') {
-                    window.location.href = result.redirect;
-                } else {
-                    document.querySelector('.spinner').style.display = 'none';
-                    document.querySelector('h1').textContent = 'Access Blocked';
-                    document.querySelector('p').textContent = '';
-                    errorMessage.textContent = result.reason === 'bypass_detected' ? 'Bypass Detected! Please use a valid link.' : 'Validation failed: ' + result.reason;
-                    errorMessage.style.display = 'block';
-                }
-            } catch (error) {
-                errorMessage.textContent = 'An error occurred. Please refresh the page.';
-                errorMessage.style.display = 'block';
+        window.addEventListener('load', () => {
+            if (typeof runChallenge === 'function') {
+                setTimeout(() => {
+                    runChallenge("{{ short_id }}", "{{ challenge_token }}");
+                }, 2000);
+            } else {
+                document.getElementById('error-message').textContent = 'Error loading verification script.';
+                document.getElementById('error-message').style.display = 'block';
             }
-        }
-
-        // Run after a small delay to ensure referer is captured and simulate "checking"
-        setTimeout(runChallenge, 2000);
+        });
     </script>
 </body>
 </html>

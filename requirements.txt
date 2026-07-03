@@ -3,7 +3,6 @@ uvicorn[standard]
 aiogram
 motor
 dnspython
-redis
 python-dotenv
 jinja2
 itsdangerous
