@@ -68,18 +68,35 @@ async def direct_redirect(
             "server_verified": False
         })
 
-        # Call shortener API
-        callback_url = f"{settings.BASE_URL}/{short_id}?v={token}"
+        # Determine current base URL dynamically
+        current_base = str(request.base_url).rstrip('/')
+        callback_url = f"{current_base}/{short_id}?v={token}"
+
         encrypted_api = user['config']['api_key']
         shortener_api = decrypt_url(encrypted_api)
-        api_url = f"{shortener_base}/api?api={shortener_api}&url={callback_url}"
+
+        if not shortener_api:
+            return HTMLResponse(content="<h1>⚠️ Configuration Error</h1>", status_code=500)
+
+        api_url = f"{shortener_base}/api"
+        params = {
+            "api": shortener_api,
+            "url": callback_url
+        }
 
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(api_url, timeout=10.0)
+                resp = await client.get(api_url, params=params, timeout=10.0)
                 if resp.status_code == 200:
                     result = resp.json()
-                    short_url = result.get("short_url") or result.get("shortenedUrl")
+                    # Support various shortener API response formats
+                    short_url = (
+                        result.get("short_url") or
+                        result.get("shortenedUrl") or
+                        result.get("url") or
+                        result.get("link") or
+                        result.get("short")
+                    )
                     if short_url:
                         return RedirectResponse(url=short_url)
         except Exception:

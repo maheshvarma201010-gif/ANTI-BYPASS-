@@ -11,6 +11,7 @@ router = APIRouter()
 
 @router.get("/api")
 async def create_protected_link(
+    request: Request,
     api: str = Query(...),
     url: str = Query(...),
     db = Depends(get_database)
@@ -30,16 +31,20 @@ async def create_protected_link(
 
     await db.protected_links.insert_one(protected_link)
 
+    # Determine current base URL dynamically
+    current_base = str(request.base_url).rstrip('/')
+    protected_url = f"{current_base}/{short_id}"
+
     # Notify via Telegram
     try:
         from app.bot.bot import bot
-        await bot.send_message(user['telegram_id'], f"✅ Link Protected: {url}\nProtected URL: {settings.BASE_URL}/{short_id}")
+        await bot.send_message(user['telegram_id'], f"✅ Link Protected: {url}\nProtected URL: {protected_url}")
     except Exception:
         pass
 
     return {
         "status": "success",
-        "protected_url": f"{settings.BASE_URL}/{short_id}",
+        "protected_url": protected_url,
         "short_id": short_id
     }
 
