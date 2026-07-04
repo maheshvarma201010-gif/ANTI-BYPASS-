@@ -4,10 +4,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from app.bot.bot import bot
 from app.models.database import get_database
-from app.schemas.models import ShortenerConfig, User
 from app.core.security import generate_api_key, encrypt_url, decrypt_url
 from app.core.config import settings
-from datetime import datetime, timedelta
+from datetime import datetime
 import httpx
 
 router = Router()
@@ -20,22 +19,9 @@ class ConnectStates(StatesGroup):
 async def cmd_start(message: types.Message):
     await message.answer(
         "👋 Welcome to Anti-Bypass Protection Bot!\n\n"
-        "Use /connect to link your shortener and start protecting your links."
+        "Connect your existing shortener to start protecting your links with our JavaScript Referer check.\n\n"
+        "Use /connect to get started."
     )
-
-@router.message(Command("help"))
-async def cmd_help(message: types.Message):
-    help_text = (
-        "Available Commands:\n"
-        "/start - Start the bot\n"
-        "/help - Show this help message\n"
-        "/connect - Connect your shortener\n"
-        "/api - Show your API details\n"
-        "/regenerate - Regenerate your API key\n"
-        "/stats - View your statistics\n"
-        "/delete - Delete your account"
-    )
-    await message.answer(help_text)
 
 @router.message(Command("connect"))
 async def cmd_connect(message: types.Message, state: FSMContext):
@@ -58,11 +44,11 @@ async def process_api_key(message: types.Message, state: FSMContext):
     data = await state.get_data()
     url = data['url']
 
-    # Validate the API key
+    await message.answer("⏳ Validating credentials...")
+
+    # Validate the API key with the real shortener
     test_url = "https://google.com"
     validate_url = f"{url}/api?api={api_key}&url={test_url}"
-
-    await message.answer("⏳ Validating API key...")
 
     is_valid = False
     try:
@@ -70,10 +56,10 @@ async def process_api_key(message: types.Message, state: FSMContext):
             resp = await client.get(validate_url, timeout=10.0)
             if resp.status_code == 200:
                 result = resp.json()
-                if result.get("status") == "success" or result.get("short_url") or result.get("shortenedUrl"):
+                if result.get("status") == "success" or result.get("short_url"):
                     is_valid = True
-    except Exception as e:
-        await message.answer(f"❌ Validation Error: {str(e)}")
+    except Exception:
+        pass
 
     if not is_valid:
         await message.answer("❌ Invalid API Key or Shortener URL. Please try /connect again.")
@@ -82,41 +68,42 @@ async def process_api_key(message: types.Message, state: FSMContext):
 
     db = get_database()
     telegram_id = str(message.from_user.id)
-
-    # Secure storage (encryption)
     encrypted_api_key = encrypt_url(api_key)
-
-    user_data = await db.users.find_one({"telegram_id": telegram_id})
-    new_api_key = generate_api_key()
+    new_abp_key = generate_api_key()
 
     config = {
         "base_url": url,
         "api_key": encrypted_api_key
     }
 
+    user_data = await db.users.find_one({"telegram_id": telegram_id})
     if user_data:
         await db.users.update_one(
             {"telegram_id": telegram_id},
-            {"$set": {"config": config, "api_key": new_api_key}}
+            {"$set": {"config": config, "api_key": new_abp_key, "is_active": True}}
         )
     else:
         new_user = {
             "telegram_id": telegram_id,
             "username": message.from_user.username,
-            "api_key": new_api_key,
+            "api_key": new_abp_key,
             "config": config,
             "created_at": datetime.utcnow(),
-            "is_active": True
+            "is_active": True,
+            "total_requests": 0,
+            "success_count": 0,
+            "blocked_count": 0,
+            "referer_failures": 0
         }
         await db.users.insert_one(new_user)
 
     await state.clear()
     await message.answer(
         f"✅ Connected Successfully\n\n"
-        f"Base URL: {settings.BASE_URL}\n"
-        f"Your API Key: {new_api_key}\n"
-        f"Shortener: {url}\n"
-        f"Status: Active"
+        f"Base URL\n{settings.BASE_URL}\n\n"
+        f"Your API Key\n{new_abp_key}\n\n"
+        f"Connected Shortener\n{url}\n\n"
+        f"Status\nActive"
     )
 
 @router.message(Command("api"))
@@ -127,14 +114,12 @@ async def cmd_api(message: types.Message):
         await message.answer("❌ You are not connected. Use /connect first.")
         return
 
-    links_count = await db.protected_links.count_documents({"user_id": str(user['_id'])})
-
     response = (
         f"Base URL: {settings.BASE_URL}\n"
         f"API Key: {user['api_key']}\n"
-        f"Total Protected Links: {links_count}\n"
-        f"Created Date: {user['created_at'].strftime('%Y-%m-%d')}\n"
-        f"Status: {'Active' if user['is_active'] else 'Inactive'}"
+        f"Connected Shortener: {user['config']['base_url']}\n"
+        f"Status: {'Active' if user['is_active'] else 'Inactive'}\n"
+        f"Total Requests: {user.get('total_requests', 0)}"
     )
     await message.answer(response)
 
@@ -160,46 +145,12 @@ async def cmd_stats(message: types.Message):
         await message.answer("❌ User not found.")
         return
 
-    user_id_str = str(user['_id'])
-    links = await db.protected_links.find({"user_id": user_id_str}).to_list(length=1000)
-    short_ids = [l['short_id'] for l in links]
-
-    total_links = len(short_ids)
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-
-    today_requests = await db.request_logs.count_documents({
-        "short_id": {"$in": short_ids},
-        "timestamp": {"$gte": today}
-    })
-
-    success_count = await db.request_logs.count_documents({
-        "short_id": {"$in": short_ids},
-        "status": "success"
-    })
-
-    blocked_count = await db.request_logs.count_documents({
-        "short_id": {"$in": short_ids},
-        "status": "blocked"
-    })
-
-    referer_failures = await db.request_logs.count_documents({
-        "short_id": {"$in": short_ids},
-        "reason": "referer_failed"
-    })
-
-    js_failures = await db.request_logs.count_documents({
-        "short_id": {"$in": short_ids},
-        "reason": "invalid_token"
-    })
-
     stats_text = (
         f"📊 Statistics\n\n"
-        f"Protected Links: {total_links}\n"
-        f"Today's Requests: {today_requests}\n"
-        f"Total Success: {success_count}\n"
-        f"Total Blocked: {blocked_count}\n"
-        f"Referer Failures: {referer_failures}\n"
-        f"JS Failures: {js_failures}"
+        f"Total Requests: {user.get('total_requests', 0)}\n"
+        f"Successful Requests: {user.get('success_count', 0)}\n"
+        f"Blocked Requests: {user.get('blocked_count', 0)}\n"
+        f"Referer Failures: {user.get('referer_failures', 0)}"
     )
     await message.answer(stats_text)
 
@@ -207,11 +158,5 @@ async def cmd_stats(message: types.Message):
 async def cmd_delete(message: types.Message):
     db = get_database()
     telegram_id = str(message.from_user.id)
-    user = await db.users.find_one({"telegram_id": telegram_id})
-    if user:
-        user_id_str = str(user['_id'])
-        await db.protected_links.delete_many({"user_id": user_id_str})
-        await db.users.delete_one({"telegram_id": telegram_id})
-        await message.answer("✅ Account and data deleted successfully.")
-    else:
-        await message.answer("❌ Account not found.")
+    await db.users.delete_one({"telegram_id": telegram_id})
+    await message.answer("✅ Account deleted successfully.")
