@@ -31,18 +31,28 @@ def get_bridge_page_html(short_id: str) -> str:
                 .then(data => {{
                     if (data.status === "success") {{
                         window.location.href = data.destination;
-                    }} else if (data.status === "blocked" && data.reason === "Missing JavaScript Referer") {{
-                        document.body.innerHTML = `
-                            <h1>❌ Bypass Detected page</h1>
-                            <p>No valid JavaScript Referer was found.</p>
-                            <p>Access has been denied.</p>
-                            <p>Do not redirect to the destination.</p>
-                            <p>Do not generate or return the short link.</p>
-                            <p>Do not retry automatically.</p>
-                            <p>Do not continue any additional verification.</p>
-                        `;
+                    }} else if (data.status === "blocked") {{
+                        if (data.reason === "Missing JavaScript Referer") {{
+                            document.body.innerHTML = `
+                                <h1>❌ Bypass Detected page</h1>
+                                <p>No valid JavaScript Referer was found.</p>
+                                <p>Access has been denied.</p>
+                                <p>Do not redirect to the destination.</p>
+                                <p>Do not generate or return the short link.</p>
+                                <p>Do not retry automatically.</p>
+                                <p>Do not continue any additional verification.</p>
+                            `;
+                        }} else {{
+                            document.body.innerHTML = `
+                                <h1>❌ Bypass Detected</h1>
+                                <p>${{data.message || "Access denied."}}</p>
+                            `;
+                        }}
                     }} else {{
-                        document.body.innerHTML = "<h1>⚠️ Bypass Detected</h1>";
+                        document.body.innerHTML = `
+                            <h1>⚠️ Verification Failed</h1>
+                            <p>${{data.message || "An error occurred during verification. Please refresh the page."}}</p>
+                        `;
                     }}
                 }})
                 .catch(() => {{
@@ -108,14 +118,14 @@ async def handle_validation(
     token = payload.get("token")
     if not verify_challenge_token(token, short_id):
         await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-        return JSONResponse(content={"status": "error", "message": "Invalid or expired token"}, status_code=403)
+        return JSONResponse(content={"status": "blocked", "reason": "Invalid Token", "message": "Invalid or expired verification token."}, status_code=403)
 
     # 3. Referer check
     shortener_domain = urlparse(user['config']['base_url']).netloc
 
     if shortener_domain not in referer:
         await db.users.update_one({"_id": user_id}, {"$inc": {"referer_failures": 1, "blocked_count": 1}})
-        return JSONResponse(content={"status": "error", "message": "Invalid referer"}, status_code=403)
+        return JSONResponse(content={"status": "blocked", "reason": "Invalid Referer", "message": "Access must come from an authorized short link."}, status_code=403)
 
     # 4. Success
     await db.users.update_one({"_id": user_id}, {"$inc": {"success_count": 1}})
