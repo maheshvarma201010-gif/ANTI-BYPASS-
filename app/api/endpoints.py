@@ -1,4 +1,5 @@
 import secrets
+from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from app.models.database import get_database
@@ -15,6 +16,9 @@ async def create_protected_link(
     request: Request,
     api: str = Query(...),
     url: str = Query(...),
+    shortener_base: Optional[str] = Query(None),
+    shortener_api: Optional[str] = Query(None),
+    no_verify: Optional[int] = Query(None),
     db = Depends(get_database)
 ):
     user = await db.users.find_one({"api_key": api})
@@ -23,10 +27,19 @@ async def create_protected_link(
 
     short_id = secrets.token_urlsafe(6)
 
+    custom_config = None
+    if shortener_base and shortener_api:
+        custom_config = {
+            "base_url": shortener_base,
+            "api_key": encrypt_url(shortener_api)
+        }
+
     protected_link = {
         "user_id": str(user['_id']),
         "short_id": short_id,
         "original_url": url,
+        "no_verify": bool(no_verify),
+        "custom_config": custom_config,
         "created_at": datetime.utcnow()
     }
 

@@ -37,10 +37,14 @@ async def direct_redirect(
     user_id = link['user_id']
     user = await db.users.find_one({"_id": ObjectId(user_id)}) if isinstance(user_id, str) else await db.users.find_one({"_id": user_id})
 
-    if not user or not user.get('config'):
+    if link.get("no_verify"):
         return RedirectResponse(url=link['original_url'])
 
-    shortener_base = user['config']['base_url']
+    config = link.get("custom_config") or (user.get('config') if user else None)
+    if not config:
+        return RedirectResponse(url=link['original_url'])
+
+    shortener_base = config['base_url']
     ip = request.client.host
 
     # 1. Initial Hit (no token)
@@ -78,7 +82,7 @@ async def direct_redirect(
         current_base = str(request.base_url).rstrip('/')
         callback_url = f"{current_base}/{short_id}?sig={token}"
 
-        encrypted_api = user['config']['api_key']
+        encrypted_api = config['api_key']
         shortener_api = decrypt_url(encrypted_api)
 
         if not shortener_api:
