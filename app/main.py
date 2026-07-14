@@ -122,5 +122,14 @@ async def validate_js(
     return await handle_validation(request, short_id, payload, db)
 
 @app.get("/health")
-async def health_check():
-    return {"status": "ok"}
+async def health_check(db = Depends(get_database)):
+    try:
+        # Perform a fast ping command to verify database connectivity
+        await db.command("ping")
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "details": str(e)
+        }
