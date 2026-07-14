@@ -20,8 +20,71 @@ async def cmd_start(message: types.Message):
     await message.answer(
         "👋 Welcome to Anti-Bypass Protection Bot!\n\n"
         "Connect your existing shortener to start protecting your links with our JavaScript Referer check.\n\n"
-        "Use /connect to get started."
+        "Available Commands:\n"
+        "/connect - Connect to shortener\n"
+        "/api - View current credentials and configuration\n"
+        "/regenerate - Regenerate your API key\n"
+        "/stats - View bypass statistics\n"
+        "/domains - List whitelisted domains\n"
+        "/adddomain <domain> - Whitelist a domain\n"
+        "/deldomain <domain> - Remove a domain from whitelist\n"
+        "/delete - Delete your account"
     )
+
+@router.message(Command("domains"))
+async def cmd_domains(message: types.Message):
+    db = get_database()
+    cursor = db.allowed_domains.find({})
+    domains = []
+    async for doc in cursor:
+        domains.append(doc["domain"])
+
+    if not domains:
+        await message.answer("⚠️ No allowed domains registered currently.")
+        return
+
+    domains_list = "\n".join(f"• {domain}" for domain in domains)
+    await message.answer(f"🌐 Whitelisted Domains:\n\n{domains_list}")
+
+@router.message(Command("adddomain"))
+async def cmd_adddomain(message: types.Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("❌ Usage: /adddomain <domain>\nExample: /adddomain arolinks.com")
+        return
+
+    domain = args[1].strip().lower()
+    # Basic domain validation format check
+    if not domain or "." not in domain or len(domain) < 4:
+        await message.answer("❌ Invalid domain format. Please provide a valid domain (e.g., example.com).")
+        return
+
+    db = get_database()
+    existing = await db.allowed_domains.find_one({"domain": domain})
+    if existing:
+        await message.answer(f"ℹ️ Domain `{domain}` is already whitelisted.")
+        return
+
+    await db.allowed_domains.insert_one({
+        "domain": domain,
+        "created_at": datetime.utcnow()
+    })
+    await message.answer(f"✅ Domain `{domain}` added to whitelist successfully!")
+
+@router.message(Command("deldomain"))
+async def cmd_deldomain(message: types.Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("❌ Usage: /deldomain <domain>\nExample: /deldomain arolinks.com")
+        return
+
+    domain = args[1].strip().lower()
+    db = get_database()
+    result = await db.allowed_domains.delete_one({"domain": domain})
+    if result.deleted_count > 0:
+        await message.answer(f"✅ Domain `{domain}` removed from whitelist successfully!")
+    else:
+        await message.answer(f"❌ Domain `{domain}` not found in the whitelist.")
 
 @router.message(Command("connect"))
 async def cmd_connect(message: types.Message, state: FSMContext):

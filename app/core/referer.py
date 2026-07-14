@@ -12,6 +12,74 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+def get_blocked_page_html() -> str:
+    """Generate professional Access Denied error page for blocked requests."""
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Access Denied - Security Violation</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                background: #f7fafc;
+                padding: 20px;
+                margin: 0;
+            }
+            .container {
+                background: white;
+                border-radius: 16px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+                padding: 48px;
+                max-width: 540px;
+                width: 100%;
+                text-align: center;
+            }
+            .error-icon { font-size: 56px; margin-bottom: 16px; display: block; }
+            h1 {
+                font-size: 24px;
+                color: #e53e3e;
+                margin-bottom: 16px;
+                font-weight: 700;
+            }
+            p {
+                color: #4a5568;
+                font-size: 16px;
+                line-height: 1.6;
+                margin-bottom: 12px;
+            }
+            .highlight {
+                font-weight: 600;
+                color: #2d3748;
+            }
+            .footer {
+                margin-top: 24px;
+                font-size: 14px;
+                color: #a0aec0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <span class="error-icon">❌</span>
+            <h1>ACCESS DENIED</h1>
+            <p class="highlight">Security violation detected.</p>
+            <p>Invalid or missing Referer.</p>
+            <p>Please access this page only through an approved shortener.</p>
+            <div class="footer">
+                Anti-Bypass Protection System
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
 def get_bridge_page_html(short_id: str) -> str:
     """Generate bridge page with comprehensive verification"""
     token = generate_challenge_token(short_id)
@@ -294,34 +362,20 @@ def get_bridge_page_html(short_id: str) -> str:
             }}
 
             function showBlocked(data) {{
-                let html = `<div class="fade-in"><span class="error-icon">🔒</span><h1>Access Denied</h1>`;
+                let html = `<div class="fade-in">`;
                 
-                if (data.reason === "Missing JavaScript Referer") {{
+                if (data.reason === "Missing JavaScript Referer" || data.reason === "Invalid Referer") {{
                     html += `
-                        <p class="subtitle">We couldn't verify your browser's referer information.</p>
-                        <div class="message-box">
-                            <p><strong>Common causes:</strong></p>
-                            <ul>
-                                <li>🔒 Browser extensions blocking referer headers</li>
-                                <li>🛡️ Privacy settings (Safari, Firefox Enhanced Tracking)</li>
-                                <li>📋 Opening link in a new tab/window</li>
-                                <li>🔄 Using a bookmark or direct URL</li>
-                            </ul>
-                            <p style="margin-top: 8px;"><strong>Solutions:</strong></p>
-                            <ul>
-                                <li>✅ Click the original link directly</li>
-                                <li>✅ Disable privacy extensions temporarily</li>
-                                <li>✅ Try a different browser</li>
-                                <li>✅ Use Incognito/Private mode</li>
-                            </ul>
-                        </div>
-                        <div class="btn-group">
-                            <button class="btn btn-primary" onclick="location.reload()">🔄 Retry</button>
-                            <button class="btn btn-secondary" onclick="window.history.back()">← Go Back</button>
-                        </div>
+                        <span class="error-icon">❌</span>
+                        <h1 style="color: #e53e3e; font-size: 24px; font-weight: 700; margin-bottom: 16px;">ACCESS DENIED</h1>
+                        <p style="color: #4a5568; font-size: 16px; font-weight: 600; margin-bottom: 12px;">Security violation detected.</p>
+                        <p style="color: #4a5568; font-size: 16px; margin-bottom: 12px;">Invalid or missing Referer.</p>
+                        <p style="color: #4a5568; font-size: 16px; margin-bottom: 12px;">Please access this page only through an approved shortener.</p>
                     `;
                 }} else if (data.reason === "Invalid Token") {{
                     html += `
+                        <span class="error-icon">🔒</span>
+                        <h1>Access Denied</h1>
                         <p class="subtitle">Your verification token has expired.</p>
                         <div class="message-box">
                             <p>Tokens expire after 10 minutes for security.</p>
@@ -331,19 +385,10 @@ def get_bridge_page_html(short_id: str) -> str:
                             <button class="btn btn-primary" onclick="location.reload()">🔄 Refresh</button>
                         </div>
                     `;
-                }} else if (data.reason === "Invalid Referer") {{
-                    html += `
-                        <p class="subtitle">Invalid referer detected.</p>
-                        <div class="message-box">
-                            <p>You must access this link from the original source.</p>
-                            <p><strong>Please use the original short link provided.</strong></p>
-                        </div>
-                        <div class="btn-group">
-                            <button class="btn btn-secondary" onclick="window.history.back()">← Go Back</button>
-                        </div>
-                    `;
                 }} else {{
                     html += `
+                        <span class="error-icon">⚠️</span>
+                        <h1>Access Denied</h1>
                         <p class="subtitle">${{data.message || "Access denied due to security policy."}}</p>
                         <div class="btn-group">
                             <button class="btn btn-primary" onclick="location.reload()">🔄 Try Again</button>
@@ -429,18 +474,109 @@ async def handle_validation(
                 status_code=404
             )
 
+        # ============== STEP 1: REFERER VALIDATION ==============
+        referer = payload.get("referrer", "")
+        if referer is not None:
+            referer = referer.strip()
+
+        # 1. Missing / Empty referer check
+        if not referer or referer.lower() in ["null", "undefined"]:
+            # Log to request_logs as required
+            log_entry = {
+                "timestamp": datetime.now(timezone.utc),
+                "ip": client_ip,
+                "user_agent": user_agent,
+                "api_key": user.get("api_key"),
+                "requested_url": str(request.url),
+                "reason": "Missing JavaScript Referer",
+                "short_id": short_id,
+                "status": "blocked"
+            }
+            await db.request_logs.insert_one(log_entry)
+
+            # Update stats
+            await db.users.update_one(
+                {"_id": user_id},
+                {"$inc": {"referer_failures": 1, "blocked_count": 1}}
+            )
+
+            return JSONResponse(
+                content={
+                    "status": "blocked",
+                    "reason": "Missing JavaScript Referer",
+                    "message": "Bypass detected."
+                },
+                status_code=403
+            )
+
+        # 2. Present but Invalid referer check
+        referer_valid = False
+        referer_reason = ""
+
+        shortener_domain = urlparse(user['config']['base_url']).netloc
+        if ":" in shortener_domain:
+            shortener_domain = shortener_domain.split(":")[0]
+
+        try:
+            parsed_ref = urlparse(referer)
+            ref_host = (parsed_ref.netloc or parsed_ref.path).lower().strip()
+            if ":" in ref_host:
+                ref_host = ref_host.split(":")[0]
+
+            # A. Check if matched with allowed whitelisted domains
+            if await is_allowed_referer(referer, db):
+                referer_valid = True
+                referer_reason = "allowed_referer"
+
+            # B. Check if matched with user's own shortener domain or subdomain
+            elif ref_host == shortener_domain or ref_host.endswith(f".{shortener_domain}"):
+                referer_valid = True
+                referer_reason = "user_shortener"
+        except Exception:
+            pass
+
+        if not referer_valid:
+            # Log to request_logs as required
+            log_entry = {
+                "timestamp": datetime.now(timezone.utc),
+                "ip": client_ip,
+                "user_agent": user_agent,
+                "referer": referer,
+                "api_key": user.get("api_key"),
+                "requested_url": str(request.url),
+                "reason": "Invalid Referer",
+                "short_id": short_id,
+                "status": "blocked"
+            }
+            await db.request_logs.insert_one(log_entry)
+
+            # Update stats
+            await db.users.update_one(
+                {"_id": user_id},
+                {"$inc": {"referer_failures": 1, "blocked_count": 1}}
+            )
+
+            return JSONResponse(
+                content={
+                    "status": "blocked",
+                    "reason": "Invalid Referer",
+                    "message": "Security verification failed. Please use the original short link."
+                },
+                status_code=403
+            )
+
+        # ============== STEP 2: TOKEN VALIDATION ==============
         # Get user's verification history
         user_history = await get_user_verification_history(user_id, db)
         
-        # ============== STEP 1: TOKEN VALIDATION ==============
         token = payload.get("token")
         retry_count = payload.get("retryCount", 0)
         
         # First check: Is this a genuine user with good history?
         is_genuine_user = user_history.get("success_rate", 0) > 0.7 and user_history.get("total_attempts", 0) > 5
         
-        # Validate token with flexible expiration for genuine users
-        token_valid = verify_challenge_token(token, short_id, max_age=600 if is_genuine_user else 300)
+        # Validate token
+        token_valid = verify_challenge_token(token, short_id)
         
         if not token_valid:
             # Allow retry for genuine users with good history
@@ -487,91 +623,6 @@ async def handle_validation(
                     "status": "blocked",
                     "reason": "Invalid Token",
                     "message": "Verification token expired. Please refresh the page and try again."
-                },
-                status_code=403
-            )
-
-        # ============== STEP 2: REFERER VALIDATION ==============
-        referer = payload.get("referrer", "")
-        shortener_domain = urlparse(user['config']['base_url']).netloc
-        
-        # Multiple referer validation approaches
-        referer_valid = False
-        referer_reason = ""
-        
-        # Approach 1: Direct match
-        if shortener_domain in referer:
-            referer_valid = True
-        else:
-            # Approach 2: Check if referer is a known allowed source
-            referer_valid = await is_allowed_referer(referer, db)
-            if referer_valid:
-                referer_reason = "allowed_referer"
-            
-            # Approach 3: Check if this is a legitimate missing referer
-            if not referer:
-                if await is_legitimate_no_referer(client_ip, user_agent, user_id, db):
-                    referer_valid = True
-                    referer_reason = "legitimate_missing"
-                elif user_history.get("success_rate", 0) > 0.9:
-                    # Trusted users with high success rate
-                    referer_valid = True
-                    referer_reason = "trusted_user"
-            
-            # Approach 4: Check if referer is a subdomain or related domain
-            if not referer_valid and referer:
-                if await is_related_domain(referer, shortener_domain, db):
-                    referer_valid = True
-                    referer_reason = "related_domain"
-        
-        if not referer_valid:
-            # Check if user is in whitelist
-            if await is_whitelisted_user(user_id, db):
-                referer_valid = True
-                referer_reason = "whitelisted"
-            
-            # Check if this is a test/development environment
-            if await is_development_environment(client_ip, user_agent):
-                referer_valid = True
-                referer_reason = "development"
-        
-        # Log referer validation result
-        await db.users.update_one(
-            {"_id": user_id},
-            {"$push": {
-                "referer_validation_history": {
-                    "timestamp": datetime.now(timezone.utc),
-                    "referer": referer[:100],  # Truncate for storage
-                    "valid": referer_valid,
-                    "reason": referer_reason
-                }
-            }}
-        )
-        
-        if not referer_valid:
-            await log_validation_event(db, {
-                "short_id": short_id,
-                "user_id": user_id,
-                "timestamp": datetime.now(timezone.utc),
-                "ip": client_ip,
-                "user_agent": user_agent,
-                "referer": referer,
-                "expected_domain": shortener_domain,
-                "reason": "Invalid Referer",
-                "status": "blocked",
-                "verification_id": verification_id
-            })
-            
-            await db.users.update_one(
-                {"_id": user_id},
-                {"$inc": {"referer_failures": 1, "blocked_count": 1}}
-            )
-            
-            return JSONResponse(
-                content={
-                    "status": "blocked",
-                    "reason": "Invalid Referer",
-                    "message": "Security verification failed. Please use the original short link."
                 },
                 status_code=403
             )
@@ -687,16 +738,35 @@ async def get_user_verification_history(user_id: ObjectId, db) -> Dict[str, Any]
         "blocked_count": user.get("blocked_count", 0)
     }
 
+async def get_allowed_domains(db) -> list[str]:
+    """Retrieve all allowed domains from the database."""
+    cursor = db.allowed_domains.find({})
+    domains = []
+    async for doc in cursor:
+        domains.append(doc["domain"].lower().strip())
+    return domains
+
 async def is_allowed_referer(referer: str, db) -> bool:
     """Check if referer is in allowed list"""
     if not referer:
         return False
     
-    allowed = await db.allowed_referers.find_one({
-        "domain": {"$regex": re.escape(referer), "$options": "i"}
-    })
+    try:
+        parsed = urlparse(referer)
+        referer_domain = (parsed.netloc or parsed.path).lower().strip()
+        # Strip port number if any
+        if ":" in referer_domain:
+            referer_domain = referer_domain.split(":")[0]
+
+        allowed_domains = await get_allowed_domains(db)
+        for domain in allowed_domains:
+            # Match exact domain or subdomains
+            if referer_domain == domain or referer_domain.endswith(f".{domain}"):
+                return True
+    except Exception:
+        pass
     
-    return allowed is not None
+    return False
 
 async def is_legitimate_no_referer(ip: str, user_agent: str, user_id: ObjectId, db) -> bool:
     """Check if missing referer is legitimate"""

@@ -1,3 +1,4 @@
+from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
 
@@ -22,6 +23,17 @@ async def connect_to_mongo():
     await db.db.verifications.create_index("token", unique=True)
     await db.db.verifications.create_index([("ip", 1), ("short_id", 1)])
     await db.db.verifications.create_index("created_at", expireAfterSeconds=settings.TOKEN_EXPIRY_SECONDS)
+
+    # Allowed domains collection
+    await db.db.allowed_domains.create_index("domain", unique=True)
+    count = await db.db.allowed_domains.count_documents({})
+    if count == 0:
+        default_domains = [
+            {"domain": "arolinks.com", "created_at": datetime.utcnow()},
+            {"domain": "gplinks.co", "created_at": datetime.utcnow()},
+            {"domain": "shortzon.com", "created_at": datetime.utcnow()}
+        ]
+        await db.db.allowed_domains.insert_many(default_domains)
 
 async def close_mongo_connection():
     db.client.close()
