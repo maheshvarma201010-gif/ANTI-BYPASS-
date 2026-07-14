@@ -43,26 +43,21 @@ async def bridge_page(
         # Strict server-side referer validation when referer is present
         is_valid = False
         try:
-            parsed_ref = urlparse(referer)
-            ref_host = (parsed_ref.netloc or parsed_ref.path).lower().strip()
-            if ":" in ref_host:
-                ref_host = ref_host.split(":")[0]
+            from app.core.referer import extract_domain, get_allowed_domains
+            ref_host = extract_domain(referer)
 
             # 1. Check dynamically whitelisted domains
-            from app.core.referer import get_allowed_domains
             allowed_domains = await get_allowed_domains(db)
             for domain in allowed_domains:
-                if ref_host == domain or ref_host.endswith(f".{domain}"):
+                allowed_host = extract_domain(domain)
+                if ref_host == allowed_host or ref_host.endswith(f".{allowed_host}"):
                     is_valid = True
                     break
 
             # 2. Check user's connected shortener domain
             if not is_valid and user and "config" in user and "base_url" in user["config"]:
                 shortener_base = user["config"]["base_url"]
-                parsed_short = urlparse(shortener_base)
-                short_host = (parsed_short.netloc or parsed_short.path).lower().strip()
-                if ":" in short_host:
-                    short_host = short_host.split(":")[0]
+                short_host = extract_domain(shortener_base)
                 if ref_host == short_host or ref_host.endswith(f".{short_host}"):
                     is_valid = True
         except Exception:

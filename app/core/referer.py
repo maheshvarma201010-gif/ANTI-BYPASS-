@@ -475,39 +475,57 @@ async def handle_validation(
             )
 
         # ============== STEP 1: REFERER VALIDATION ==============
+        # Get user's verification history early for fallbacks
+        user_history = await get_user_verification_history(user_id, db)
+
         referer = payload.get("referrer", "")
         if referer is not None:
             referer = referer.strip()
 
         # 1. Missing / Empty referer check
         if not referer or referer.lower() in ["null", "undefined"]:
-            # Log to request_logs as required
-            log_entry = {
-                "timestamp": datetime.now(timezone.utc),
-                "ip": client_ip,
-                "user_agent": user_agent,
-                "api_key": user.get("api_key"),
-                "requested_url": str(request.url),
-                "reason": "Missing JavaScript Referer",
-                "short_id": short_id,
-                "status": "blocked"
-            }
-            await db.request_logs.insert_one(log_entry)
+            # Perform fallback checks for missing referer to prevent blocking legitimate users
+            is_legit = False
+            try:
+                if await is_legitimate_no_referer(client_ip, user_agent, user_id, db):
+                    is_legit = True
+                elif user_history.get("success_rate", 0) > 0.85:
+                    is_legit = True
+                elif await is_whitelisted_user(user_id, db):
+                    is_legit = True
+                elif await is_development_environment(client_ip, user_agent):
+                    is_legit = True
+            except Exception:
+                pass
 
-            # Update stats
-            await db.users.update_one(
-                {"_id": user_id},
-                {"$inc": {"referer_failures": 1, "blocked_count": 1}}
-            )
-
-            return JSONResponse(
-                content={
-                    "status": "blocked",
+            if not is_legit:
+                # Log to request_logs as required
+                log_entry = {
+                    "timestamp": datetime.now(timezone.utc),
+                    "ip": client_ip,
+                    "user_agent": user_agent,
+                    "api_key": user.get("api_key"),
+                    "requested_url": str(request.url),
                     "reason": "Missing JavaScript Referer",
-                    "message": "Bypass detected."
-                },
-                status_code=403
-            )
+                    "short_id": short_id,
+                    "status": "blocked"
+                }
+                await db.request_logs.insert_one(log_entry)
+
+                # Update stats
+                await db.users.update_one(
+                    {"_id": user_id},
+                    {"$inc": {"referer_failures": 1, "blocked_count": 1}}
+                )
+
+                return JSONResponse(
+                    content={
+                        "status": "blocked",
+                        "reason": "Missing JavaScript Referer",
+                        "message": "Bypass detected."
+                    },
+                    status_code=403
+                )
 
         # 2. Present but Invalid referer check
         referer_valid = False
@@ -566,9 +584,6 @@ async def handle_validation(
             )
 
         # ============== STEP 2: TOKEN VALIDATION ==============
-        # Get user's verification history
-        user_history = await get_user_verification_history(user_id, db)
-        
         token = payload.get("token")
         retry_count = payload.get("retryCount", 0)
         
@@ -738,6 +753,27 @@ async def get_user_verification_history(user_id: ObjectId, db) -> Dict[str, Any]
         "blocked_count": user.get("blocked_count", 0)
     }
 
+def extract_domain(url: str) -> str:
+    """Robust domain extraction that handles different scheme/URL formats."""
+    if not url:
+        return ""
+    url = url.strip().lower()
+    # If no scheme is present, add // so urlparse can parse netloc correctly
+    if not url.startswith(("http://", "https://", "//")):
+        url = "//" + url
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc or parsed.path
+        # Strip port number if any
+        if ":" in host:
+            host = host.split(":")[0]
+        # Strip 'www.' if present
+        if host.startswith("www."):
+            host = host[4:]
+        return host.strip()
+    except Exception:
+        return ""
+
 async def get_allowed_domains(db) -> list[str]:
     """Retrieve all allowed domains from the database."""
     cursor = db.allowed_domains.find({})
@@ -752,16 +788,15 @@ async def is_allowed_referer(referer: str, db) -> bool:
         return False
     
     try:
-        parsed = urlparse(referer)
-        referer_domain = (parsed.netloc or parsed.path).lower().strip()
-        # Strip port number if any
-        if ":" in referer_domain:
-            referer_domain = referer_domain.split(":")[0]
+        ref_host = extract_domain(referer)
+        if not ref_host:
+            return False
 
         allowed_domains = await get_allowed_domains(db)
         for domain in allowed_domains:
+            allowed_host = extract_domain(domain)
             # Match exact domain or subdomains
-            if referer_domain == domain or referer_domain.endswith(f".{domain}"):
+            if ref_host == allowed_host or ref_host.endswith(f".{allowed_host}"):
                 return True
     except Exception:
         pass
@@ -805,16 +840,16 @@ async def is_related_domain(referer: str, shortener_domain: str, db) -> bool:
         return False
     
     try:
-        parsed = urlparse(referer)
-        referer_domain = parsed.netloc or parsed.path
+        ref_host = extract_domain(referer)
+        sh_host = extract_domain(shortener_domain)
         
-        # Check if it's a subdomain
-        if referer_domain.endswith(f".{shortener_domain}"):
+        # Check if it's a subdomain or exact match
+        if ref_host == sh_host or ref_host.endswith(f".{sh_host}"):
             return True
         
         # Check if it's in the related domains list
         related = await db.related_domains.find_one({
-            "domain": referer_domain
+            "domain": ref_host
         })
         
         return related is not None
