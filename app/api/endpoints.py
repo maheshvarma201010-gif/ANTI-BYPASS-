@@ -19,7 +19,13 @@ async def create_protected_link(
     url: str = Query(...),
     db = Depends(get_database)
 ):
-    user = await db.users.find_one({"api_key": api})
+    # Find user by global api_key or by matching shorteners abp_key
+    user = await db.users.find_one({
+        "$or": [
+            {"api_key": api},
+            {"shorteners.abp_key": api}
+        ]
+    })
     if not user:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
@@ -38,12 +44,23 @@ async def create_protected_link(
     await db.users.update_one({"_id": user['_id']}, {"$inc": {"total_requests": 1}})
 
     # 2. Call the real shortener
-    config = user.get('config')
-    if not config:
+    shortener_config = None
+    if user.get("api_key") == api:
+        shortener_config = user.get("config")
+    else:
+        for s in user.get("shorteners", []):
+            if s.get("abp_key") == api:
+                shortener_config = {
+                    "base_url": s.get("base_url"),
+                    "api_key": s.get("api_key")
+                }
+                break
+
+    if not shortener_config:
         raise HTTPException(status_code=400, detail="Shortener not connected")
 
-    shortener_base = config['base_url']
-    shortener_api = decrypt_url(config['api_key'])
+    shortener_base = shortener_config['base_url']
+    shortener_api = decrypt_url(shortener_config['api_key'])
 
     # Our bridge URL that the shortener will redirect to
     current_base = str(request.base_url).rstrip('/')
