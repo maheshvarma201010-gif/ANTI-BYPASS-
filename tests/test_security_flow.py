@@ -45,7 +45,7 @@ async def test_normal_verification_and_redirect():
     response = await original_shortlink(request, short_id, db)
 
     # Verify that redirection happened to continue endpoint
-    assert response.status_code == 303
+    assert response.status_code == 302
     assert response.headers["location"].startswith("/continue?token=")
 
     # Retrieve cookie and token
@@ -89,7 +89,7 @@ async def test_normal_verification_and_redirect():
     final_resp = await continue_endpoint(continue_request, token, db)
 
     # Successful final redirect checks
-    assert final_resp.status_code == 303
+    assert final_resp.status_code == 302
     assert final_resp.headers["location"] == original_url
     db.sessions.update_one.assert_called_once_with(
         {"_id": session_doc["_id"], "consumed": False},
@@ -191,7 +191,7 @@ async def test_empty_referer_from_shortlink_allowed():
 
     response = await original_shortlink(request, short_id, db)
     # Empty referer must NOT be blocked, it should proceed to set cookie and redirect
-    assert response.status_code == 303
+    assert response.status_code == 302
     assert response.headers["location"].startswith("/continue?token=")
 
 

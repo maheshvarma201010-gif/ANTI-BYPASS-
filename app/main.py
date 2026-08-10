@@ -211,7 +211,7 @@ async def continue_endpoint(
     destination_url = session["original_url"]
 
     # Redirect to the final destination
-    return RedirectResponse(url=destination_url, status_code=303)
+    return RedirectResponse(url=destination_url, status_code=302)
 
 @app.get("/{short_id}")
 async def original_shortlink(
@@ -319,7 +319,7 @@ async def original_shortlink(
     )
 
     # 3. Set the session ID cookie and redirect to continuation endpoint
-    response = RedirectResponse(url=f"/continue?token={token}", status_code=303)
+    response = RedirectResponse(url=f"/continue?token={token}", status_code=302)
     is_secure = request.url.scheme == "https"
     response.set_cookie(
         key="session_id",
@@ -327,6 +327,7 @@ async def original_shortlink(
         httponly=True,
         secure=is_secure,
         samesite="lax",
+        path="/",
         max_age=120  # 120 seconds TTL
     )
     return response
