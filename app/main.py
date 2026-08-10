@@ -119,6 +119,21 @@ BYPASS_DETECTED_TEMPLATE = """
 </html>
 """
 
+def get_client_ip(request: Request) -> str:
+    # Check Cloudflare
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip.strip()
+
+    # Check X-Forwarded-For
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        parts = xff.split(",")
+        if parts:
+            return parts[0].strip()
+
+    return request.client.host if request.client else "unknown"
+
 @app.get("/continue")
 async def continue_endpoint(
     request: Request,
@@ -126,9 +141,8 @@ async def continue_endpoint(
     db = Depends(get_database)
 ):
     cookie_session_id = request.cookies.get("session_id")
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
-    referer = request.headers.get("referer", "")
 
     # Retrieve session bound to token
     session = await db.sessions.find_one({"token": token})
@@ -141,8 +155,8 @@ async def continue_endpoint(
         )
 
     # Protection 2: Expired verification sessions
-    # Tokens expire after 120 seconds for slower networks
-    if time.time() - session["created_at"] > 120:
+    # Tokens expire after 300 seconds for slow networks
+    if time.time() - session["created_at"] > 300:
         return HTMLResponse(
             content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Expired verification session"),
             status_code=403
@@ -155,46 +169,23 @@ async def continue_endpoint(
             status_code=403
         )
 
-    # Protection 4: Session mismatch (anti-paste/direct access/share check)
-    if not cookie_session_id or cookie_session_id != session["session_id"]:
+    # Protection 4: Session validation (either Cookie match OR fallback to IP+UA match if cookies blocked/incognito)
+    cookie_valid = cookie_session_id and cookie_session_id == session["session_id"]
+    fallback_valid = (not cookie_session_id) and (session["client_ip"] == client_ip) and (session["user_agent"] == user_agent)
+
+    if not (cookie_valid or fallback_valid):
+        # Determine specific reason for clear security page details
+        if cookie_session_id and cookie_session_id != session["session_id"]:
+            reason = "Session mismatch"
+        elif session["user_agent"] != user_agent:
+            reason = "Session client mismatch"
+        else:
+            reason = "Session validation failed"
+
         return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Session mismatch"),
+            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", reason),
             status_code=403
         )
-
-    # Protection 5: Client consistency mismatch (User-Agent changed)
-    # We relax strict IP checks to support shifting IP mobile users, but User-Agent is validated.
-    if session["user_agent"] != user_agent:
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Session client mismatch"),
-            status_code=403
-        )
-
-    # Protection 6: Invalid Referer signal (Referer check as an additional signal, don't rely only on it)
-    # If a Referer is present, it shouldn't be completely mismatched from the expected flow
-    if referer:
-        parsed_referer = urlparse(referer)
-        parsed_request = urlparse(str(request.base_url))
-        ref_netloc = parsed_referer.netloc.lower()
-        base_netloc = parsed_request.netloc.lower()
-
-        # Retrieve shortener domain to allow redirects retaining the shortener Referer
-        shortener_domain = ""
-        try:
-            user_id = ObjectId(session["user_id"])
-            user = await db.users.find_one({"_id": user_id})
-            if user:
-                shortener_domain = urlparse(user['config']['base_url']).netloc.lower()
-        except Exception:
-            pass
-
-        if base_netloc not in ref_netloc and ref_netloc not in base_netloc:
-            # Also allow shortener_domain if present
-            if not shortener_domain or (shortener_domain not in ref_netloc and ref_netloc not in shortener_domain):
-                return HTMLResponse(
-                    content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Invalid referer signal"),
-                    status_code=403
-                )
 
     # Consume/invalidate token atomically server-side to prevent TOCTOU race conditions / parallel replay
     result = await db.sessions.update_one(
@@ -233,7 +224,7 @@ async def original_shortlink(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
     referer = request.headers.get("referer", "")
 

@@ -140,7 +140,7 @@ async def test_expired_session():
         "token": "valid_token",
         "client_ip": "1.2.3.4",
         "user_agent": "test-agent",
-        "created_at": time.time() - 121, # More than 120 seconds ago
+        "created_at": time.time() - 301, # More than 300 seconds ago
         "consumed": False
     }
 
