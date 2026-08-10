@@ -292,7 +292,11 @@ async def original_shortlink(
     # ============== REFERER VALIDATION ==============
     # We do not block empty Referer because legitimate clicks from chat apps or browsers stripping Referer
     # must not be falsely flagged as bypasses. Referer is only verified if it is present.
-    shortener_domain = urlparse(user['config']['base_url']).netloc.lower()
+    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+    if not shortener_base_url:
+        shortener_base_url = settings.BASE_URL
+
+    shortener_domain = urlparse(shortener_base_url).netloc.lower()
     parsed_base = urlparse(str(request.base_url))
     base_netloc = parsed_base.netloc.lower()
 
