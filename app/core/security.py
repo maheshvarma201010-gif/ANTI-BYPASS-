@@ -22,7 +22,7 @@ def generate_challenge_token(short_id: str) -> str:
     ).hexdigest()
     return f"{message}:{signature}"
 
-def verify_challenge_token(token: str, short_id: str) -> bool:
+def verify_challenge_token(token: str, short_id: str, max_age: Optional[int] = None) -> bool:
     """Verifies the challenge token."""
     try:
         parts = token.split(":")
@@ -34,7 +34,8 @@ def verify_challenge_token(token: str, short_id: str) -> bool:
             return False
 
         # Check expiry
-        if int(time.time()) - int(timestamp) > settings.CHALLENGE_EXPIRY_SECONDS:
+        expiry = max_age if max_age is not None else settings.CHALLENGE_EXPIRY_SECONDS
+        if int(time.time()) - int(timestamp) > expiry:
             return False
 
         # Verify signature
