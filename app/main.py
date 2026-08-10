@@ -30,63 +30,90 @@ BYPASS_DETECTED_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bypass Detected</title>
+    <title>Bypass Detected - Security Violation</title>
+    <!-- Include Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background-color: #f7fafc;
-            color: #2d3748;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 20px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: radial-gradient(circle at top right, #fff5f5, #ffffff);
         }
-        .container {
-            background: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
-            max-width: 500px;
-            width: 100%;
-            text-align: center;
-            border: 2px solid #e2e8f0;
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(229, 62, 62, 0.15);
         }
-        h1 {
-            color: #e53e3e;
-            font-size: 24px;
-            margin-top: 0;
-            margin-bottom: 20px;
+        .animate-bounce-slow {
+            animation: bounce 2s infinite;
         }
-        p {
-            font-size: 16px;
-            line-height: 1.6;
-            margin-bottom: 20px;
-        }
-        .reason {
-            background-color: #fffaf0;
-            border: 1px solid #feebc8;
-            color: #dd6b20;
-            padding: 12px;
-            border-radius: 6px;
-            font-family: monospace;
-            font-size: 14px;
-            margin-bottom: 24px;
-            word-break: break-all;
-        }
-        .footer {
-            color: #718096;
-            font-size: 14px;
+        @keyframes bounce {
+            0%, 100% {
+                transform: translateY(-5%);
+                animation-timing-function: cubic-bezier(0.8,0,1,1);
+            }
+            50% {
+                transform: none;
+                animation-timing-function: cubic-bezier(0,0,0.2,1);
+            }
         }
     </style>
 </head>
-<body>
-    <div class="container">
-        <h1>🚫 BYPASS DETECTED</h1>
-        <p>Your request could not be verified due to a security violation.</p>
-        <div class="reason">Reason: {detected_reason}</div>
-        <p class="footer">Please start again from the original shortlink.</p>
+<body class="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+    <div class="w-full max-w-lg glass-panel rounded-3xl shadow-2xl overflow-hidden p-8 md:p-10 text-center relative border border-rose-100">
+        <!-- Top Decorative Gradient Bar -->
+        <div class="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-red-500 via-rose-500 to-orange-500"></div>
+
+        <!-- Shield / Warning Icon -->
+        <div class="mx-auto w-24 h-24 mb-6 bg-rose-50 rounded-full flex items-center justify-center border-4 border-rose-100 animate-bounce-slow shadow-sm">
+            <span class="text-rose-500 text-4xl"><i class="fa-solid fa-shield-halved"></i></span>
+        </div>
+
+        <!-- Heading -->
+        <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight mb-3">
+            🚫 BYPASS DETECTED
+        </h1>
+        <p class="text-slate-500 text-md leading-relaxed mb-6">
+            Our multi-layer security system has intercepted an abnormal request that violates session validation policies.
+        </p>
+
+        <!-- Reason Card -->
+        <div class="bg-rose-50/70 border border-rose-100 rounded-2xl p-5 mb-8 text-left relative overflow-hidden">
+            <div class="absolute top-0 right-0 p-3 text-rose-200 text-5xl font-bold select-none pointer-events-none">
+                <i class="fa-solid fa-ban"></i>
+            </div>
+            <span class="text-xs font-bold uppercase tracking-wider text-rose-500 block mb-1">Security Reason</span>
+            <div class="text-slate-800 font-mono text-sm break-all font-semibold leading-relaxed">
+                {detected_reason}
+            </div>
+        </div>
+
+        <!-- Action Guide -->
+        <div class="text-left mb-8 space-y-3 bg-slate-50 border border-slate-100 rounded-2xl p-5">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2">How to continue safely</span>
+            <div class="flex items-start gap-3 text-sm text-slate-600">
+                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
+                <p>Go back to the <strong>original source</strong> where the link was shared.</p>
+            </div>
+            <div class="flex items-start gap-3 text-sm text-slate-600">
+                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
+                <p>Click the <strong>original shortlink</strong> directly to initialize a secure session.</p>
+            </div>
+            <div class="flex items-start gap-3 text-sm text-slate-600">
+                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
+                <p>Do not share, bookmark, or directly copy the continuation URL.</p>
+            </div>
+        </div>
+
+        <!-- Footer / Action Button -->
+        <div class="border-t border-slate-100 pt-6">
+            <p class="text-sm font-medium text-slate-500 mb-4">Please start again from the original shortlink.</p>
+            <button onclick="window.history.back()" class="w-full py-3.5 px-6 rounded-2xl font-semibold bg-gradient-to-r from-red-500 to-rose-600 text-white hover:from-red-600 hover:to-rose-700 active:scale-[0.98] transition shadow-lg shadow-rose-500/20 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2">
+                <i class="fa-solid fa-arrow-left mr-2"></i> Try Again / Go Back
+            </button>
+        </div>
     </div>
 </body>
 </html>
@@ -114,8 +141,8 @@ async def continue_endpoint(
         )
 
     # Protection 2: Expired verification sessions
-    # Tokens expire after 60 seconds
-    if time.time() - session["created_at"] > 60:
+    # Tokens expire after 120 seconds for slower networks
+    if time.time() - session["created_at"] > 120:
         return HTMLResponse(
             content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Expired verification session"),
             status_code=403
@@ -148,11 +175,26 @@ async def continue_endpoint(
     if referer:
         parsed_referer = urlparse(referer)
         parsed_request = urlparse(str(request.base_url))
-        if parsed_referer.netloc != parsed_request.netloc:
-            return HTMLResponse(
-                content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Invalid referer signal"),
-                status_code=403
-            )
+        ref_netloc = parsed_referer.netloc.lower()
+        base_netloc = parsed_request.netloc.lower()
+
+        # Retrieve shortener domain to allow redirects retaining the shortener Referer
+        shortener_domain = ""
+        try:
+            user_id = ObjectId(session["user_id"])
+            user = await db.users.find_one({"_id": user_id})
+            if user:
+                shortener_domain = urlparse(user['config']['base_url']).netloc.lower()
+        except Exception:
+            pass
+
+        if base_netloc not in ref_netloc and ref_netloc not in base_netloc:
+            # Also allow shortener_domain if present
+            if not shortener_domain or (shortener_domain not in ref_netloc and ref_netloc not in shortener_domain):
+                return HTMLResponse(
+                    content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Invalid referer signal"),
+                    status_code=403
+                )
 
     # Consume/invalidate token atomically server-side to prevent TOCTOU race conditions / parallel replay
     result = await db.sessions.update_one(
@@ -196,32 +238,32 @@ async def original_shortlink(
     referer = request.headers.get("referer", "")
 
     # ============== REFERER VALIDATION ==============
-    shortener_domain = urlparse(user['config']['base_url']).netloc
+    # We do not block empty Referer because legitimate clicks from chat apps or browsers stripping Referer
+    # must not be falsely flagged as bypasses. Referer is only verified if it is present.
+    shortener_domain = urlparse(user['config']['base_url']).netloc.lower()
+    parsed_base = urlparse(str(request.base_url))
+    base_netloc = parsed_base.netloc.lower()
+
     referer_valid = False
     referer_reason = ""
 
-    # Direct match
-    if shortener_domain in referer:
+    if not referer:
         referer_valid = True
+        referer_reason = "missing_referer_allowed"
     else:
-        # Check if referer is a known allowed source
-        if await is_allowed_referer(referer, db):
+        ref_netloc = urlparse(referer).netloc.lower()
+        if shortener_domain and (shortener_domain in ref_netloc or ref_netloc in shortener_domain):
+            referer_valid = True
+            referer_reason = "shortener_match"
+        elif base_netloc and (base_netloc in ref_netloc or ref_netloc in base_netloc):
+            referer_valid = True
+            referer_reason = "base_match"
+        elif await is_allowed_referer(referer, db):
             referer_valid = True
             referer_reason = "allowed_referer"
-        # Check if legitimate missing
-        elif not referer:
-            user_history = await get_user_verification_history(user_id, db)
-            if await is_legitimate_no_referer(client_ip, user_agent, user_id, db):
-                referer_valid = True
-                referer_reason = "legitimate_missing"
-            elif user_history.get("success_rate", 0) > 0.9:
-                referer_valid = True
-                referer_reason = "trusted_user"
-        # Check if subdomain or related domain
-        if not referer_valid and referer:
-            if await is_related_domain(referer, shortener_domain, db):
-                referer_valid = True
-                referer_reason = "related_domain"
+        elif await is_related_domain(referer, shortener_domain, db):
+            referer_valid = True
+            referer_reason = "related_domain"
 
     if not referer_valid:
         if await is_whitelisted_user(user_id, db):
@@ -278,13 +320,14 @@ async def original_shortlink(
 
     # 3. Set the session ID cookie and redirect to continuation endpoint
     response = RedirectResponse(url=f"/continue?token={token}", status_code=303)
+    is_secure = request.url.scheme == "https"
     response.set_cookie(
         key="session_id",
         value=session_id,
         httponly=True,
-        secure=True,
+        secure=is_secure,
         samesite="lax",
-        max_age=60  # 60 seconds TTL
+        max_age=120  # 120 seconds TTL
     )
     return response
 

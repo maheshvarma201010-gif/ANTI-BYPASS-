@@ -140,13 +140,59 @@ async def test_expired_session():
         "token": "valid_token",
         "client_ip": "1.2.3.4",
         "user_agent": "test-agent",
-        "created_at": time.time() - 61, # More than 60 seconds ago
+        "created_at": time.time() - 121, # More than 120 seconds ago
         "consumed": False
     }
 
     response = await continue_endpoint(request, "valid_token", db)
     assert response.status_code == 403
     assert "Expired verification session" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_empty_referer_from_shortlink_allowed():
+    db = MagicMock()
+    db.protected_links = AsyncMock()
+    db.users = AsyncMock()
+    db.allowed_referers = MagicMock()
+    db.allowed_referers.find_one = AsyncMock(return_value=None)
+    db.validation_events = MagicMock()
+    db.validation_events.find_one = AsyncMock(return_value=None)
+    db.ip_whitelist = MagicMock()
+    db.ip_whitelist.find_one = AsyncMock(return_value=None)
+    db.sessions = AsyncMock()
+
+    user_id = ObjectId()
+    short_id = "test_short"
+
+    db.protected_links.find_one.return_value = {
+        "user_id": str(user_id),
+        "short_id": short_id,
+        "original_url": "https://example.com"
+    }
+
+    async def mock_find_one(query, *args, **kwargs):
+        if query and "whitelisted" in query:
+            return None
+        return {
+            "_id": user_id,
+            "config": {"base_url": "https://myshortener.com"}
+        }
+    db.users.find_one = mock_find_one
+
+    # Referer is empty
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "8.8.8.8"
+    request.headers = {
+        "user-agent": "test-agent",
+        "referer": ""
+    }
+
+    response = await original_shortlink(request, short_id, db)
+    # Empty referer must NOT be blocked, it should proceed to set cookie and redirect
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/continue?token=")
 
 
 @pytest.mark.asyncio
@@ -233,6 +279,7 @@ async def test_invalid_referer():
         "user-agent": "test-agent",
         "referer": "https://someinvalidbypasssite.com"
     }
+    request.base_url = "https://my-app.com"
 
     response = await original_shortlink(request, short_id, db)
     assert response.status_code == 403
