@@ -115,12 +115,15 @@ async def create_protected_link(
     }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             resp = await client.get(api_url, params=params, timeout=10.0)
-            if resp.status_code == 200:
-                result = resp.json()
-                # We return the exact same original shortener link
-                return result
+            if resp.status_code in [200, 301, 302, 307, 308]:
+                try:
+                    result = resp.json()
+                    return result
+                except Exception:
+                    # If flat-text shortener, return it directly in JSON form
+                    return {"status": "success", "short_url": resp.text.strip()}
             else:
                 return JSONResponse(
                     content={"status": "error", "message": "Shortener API returned an error"},
