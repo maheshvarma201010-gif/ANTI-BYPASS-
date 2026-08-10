@@ -188,6 +188,14 @@ async def continue_endpoint(
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
+    referer = request.headers.get("referer", "")
+
+    # Direct paste/share protection of the redirect URL: Referer must be present on internal continuation redirect
+    if not referer:
+        return HTMLResponse(
+            content=BYPASS_DETECTED_TEMPLATE,
+            status_code=403
+        )
 
     # Retrieve session bound to token
     session = await db.sessions.find_one({"token": token})

@@ -242,23 +242,25 @@ async def process_api_key(message: types.Message, state: FSMContext):
     name = parsed.netloc or url
     if name.startswith("www."):
         name = name[4:]
-    # Capitalize the first letter for gorgeous UI
     name = name.capitalize()
 
+    # Avoid duplicate name collision by generating a unique suffix if name exists
+    existing_names = {s.get("name", "").lower() for s in user_data.get("shorteners", [])} if user_data else set()
+    unique_name = name
+    counter = 1
+    while unique_name.lower() in existing_names:
+        counter += 1
+        unique_name = f"{name} {counter}"
+
     new_shortener = {
-        "name": name,
+        "name": unique_name,
         "base_url": url,
         "api_key": encrypted_api_key,
         "abp_key": new_abp_key
     }
 
     if user_data:
-        # Pull any existing shortener with the same name to avoid duplicates
-        await db.users.update_one(
-            {"telegram_id": telegram_id},
-            {"$pull": {"shorteners": {"name": name}}}
-        )
-        # Push the new/updated shortener configuration
+        # Push the new shortener configuration directly without deleting/overwriting any existing ones
         await db.users.update_one(
             {"telegram_id": telegram_id},
             {"$push": {"shorteners": new_shortener}}
@@ -281,7 +283,7 @@ async def process_api_key(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
         f"✅ *Connected Successfully!*\n\n"
-        f"• *Name:* `{name}`\n"
+        f"• *Name:* `{unique_name}`\n"
         f"• *Base URL:* {url}\n"
         f"• *Your New ABP API Key:* `{new_abp_key}`\n\n"
         f"Use this ABP API Key to route requests with anti-bypass protection!",

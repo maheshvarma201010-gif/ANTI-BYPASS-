@@ -106,7 +106,7 @@ async def test_session_mismatch():
     request = MagicMock(spec=Request)
     request.client = MagicMock()
     request.client.host = "1.2.3.4"
-    request.headers = {"user-agent": "test-agent"}
+    request.headers = {"user-agent": "test-agent", "referer": "https://my-app.com"}
     request.cookies = {"session_id": "mismatched_cookie"}
 
     db.sessions.find_one.return_value = {
@@ -134,7 +134,7 @@ async def test_expired_session():
     request = MagicMock(spec=Request)
     request.client = MagicMock()
     request.client.host = "1.2.3.4"
-    request.headers = {"user-agent": "test-agent"}
+    request.headers = {"user-agent": "test-agent", "referer": "https://my-app.com"}
     request.cookies = {"session_id": "cookie_id"}
 
     db.sessions.find_one.return_value = {
@@ -207,12 +207,28 @@ async def test_invalid_token_direct_continuation():
     request = MagicMock(spec=Request)
     request.client = MagicMock()
     request.client.host = "1.2.3.4"
-    request.headers = {"user-agent": "test-agent"}
+    request.headers = {"user-agent": "test-agent", "referer": "https://my-app.com"}
     request.cookies = {}
 
     db.sessions.find_one.return_value = None
 
     response = await continue_endpoint(request, "non_existent_token", db)
+    assert response.status_code == 403
+    assert "🚫 BYPASS DETECTED" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_continue_endpoint_empty_referer_blocked_direct_paste():
+    db = MagicMock()
+    db.sessions = AsyncMock()
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {"user-agent": "test-agent", "referer": ""} # Empty Referer
+    request.cookies = {"session_id": "cookie_id"}
+
+    response = await continue_endpoint(request, "valid_token", db)
     assert response.status_code == 403
     assert "🚫 BYPASS DETECTED" in response.body.decode()
 
@@ -226,7 +242,7 @@ async def test_reused_token():
     request = MagicMock(spec=Request)
     request.client = MagicMock()
     request.client.host = "1.2.3.4"
-    request.headers = {"user-agent": "test-agent"}
+    request.headers = {"user-agent": "test-agent", "referer": "https://my-app.com"}
     request.cookies = {"session_id": "cookie_id"}
 
     db.sessions.find_one.return_value = {
