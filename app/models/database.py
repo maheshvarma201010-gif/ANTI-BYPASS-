@@ -23,6 +23,11 @@ async def connect_to_mongo():
     await db.db.verifications.create_index([("ip", 1), ("short_id", 1)])
     await db.db.verifications.create_index("created_at", expireAfterSeconds=settings.TOKEN_EXPIRY_SECONDS)
 
+    # Sessions collection for Anti-Bypass flow
+    await db.db.sessions.create_index("token", unique=True)
+    await db.db.sessions.create_index("session_id", unique=True)
+    await db.db.sessions.create_index("created_at", expireAfterSeconds=60)
+
 async def close_mongo_connection():
     db.client.close()
 
