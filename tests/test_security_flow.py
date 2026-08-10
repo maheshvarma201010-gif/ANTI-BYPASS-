@@ -101,6 +101,7 @@ async def test_normal_verification_and_redirect():
 async def test_session_mismatch():
     db = MagicMock()
     db.sessions = AsyncMock()
+    db.users = AsyncMock()
 
     request = MagicMock(spec=Request)
     request.client = MagicMock()
@@ -112,6 +113,7 @@ async def test_session_mismatch():
         "_id": ObjectId(),
         "session_id": "correct_cookie_id",
         "token": "valid_token",
+        "user_id": str(ObjectId()),
         "client_ip": "1.2.3.4",
         "user_agent": "test-agent",
         "created_at": time.time(),
@@ -120,13 +122,14 @@ async def test_session_mismatch():
 
     response = await continue_endpoint(request, "valid_token", db)
     assert response.status_code == 403
-    assert "Session mismatch" in response.body.decode()
+    assert "🚫 BYPASS DETECTED" in response.body.decode()
 
 
 @pytest.mark.asyncio
 async def test_expired_session():
     db = MagicMock()
     db.sessions = AsyncMock()
+    db.users = AsyncMock()
 
     request = MagicMock(spec=Request)
     request.client = MagicMock()
@@ -138,6 +141,7 @@ async def test_expired_session():
         "_id": ObjectId(),
         "session_id": "cookie_id",
         "token": "valid_token",
+        "user_id": str(ObjectId()),
         "client_ip": "1.2.3.4",
         "user_agent": "test-agent",
         "created_at": time.time() - 301, # More than 300 seconds ago
@@ -146,7 +150,7 @@ async def test_expired_session():
 
     response = await continue_endpoint(request, "valid_token", db)
     assert response.status_code == 403
-    assert "Expired verification session" in response.body.decode()
+    assert "🚫 BYPASS DETECTED" in response.body.decode()
 
 
 @pytest.mark.asyncio
@@ -210,13 +214,14 @@ async def test_invalid_token_direct_continuation():
 
     response = await continue_endpoint(request, "non_existent_token", db)
     assert response.status_code == 403
-    assert "Invalid token" in response.body.decode()
+    assert "🚫 BYPASS DETECTED" in response.body.decode()
 
 
 @pytest.mark.asyncio
 async def test_reused_token():
     db = MagicMock()
     db.sessions = AsyncMock()
+    db.users = AsyncMock()
 
     request = MagicMock(spec=Request)
     request.client = MagicMock()
@@ -228,6 +233,7 @@ async def test_reused_token():
         "_id": ObjectId(),
         "session_id": "cookie_id",
         "token": "valid_token",
+        "user_id": str(ObjectId()),
         "client_ip": "1.2.3.4",
         "user_agent": "test-agent",
         "created_at": time.time(),
@@ -236,7 +242,7 @@ async def test_reused_token():
 
     response = await continue_endpoint(request, "valid_token", db)
     assert response.status_code == 403
-    assert "Token already used" in response.body.decode()
+    assert "🚫 BYPASS DETECTED" in response.body.decode()
 
 
 @pytest.mark.asyncio
@@ -283,4 +289,4 @@ async def test_invalid_referer():
 
     response = await original_shortlink(request, short_id, db)
     assert response.status_code == 403
-    assert "Invalid referer" in response.body.decode()
+    assert "🚫 BYPASS DETECTED" in response.body.decode()

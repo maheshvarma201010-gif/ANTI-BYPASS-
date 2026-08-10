@@ -79,15 +79,11 @@ BYPASS_DETECTED_TEMPLATE = """
             Our multi-layer security system has intercepted an abnormal request that violates session validation policies.
         </p>
 
-        <!-- Reason Card -->
-        <div class="bg-rose-50/70 border border-rose-100 rounded-2xl p-5 mb-8 text-left relative overflow-hidden">
-            <div class="absolute top-0 right-0 p-3 text-rose-200 text-5xl font-bold select-none pointer-events-none">
-                <i class="fa-solid fa-ban"></i>
-            </div>
-            <span class="text-xs font-bold uppercase tracking-wider text-rose-500 block mb-1">Security Reason</span>
-            <div class="text-slate-800 font-mono text-sm break-all font-semibold leading-relaxed">
-                {detected_reason}
-            </div>
+        <!-- Instruction / Info Card -->
+        <div class="bg-rose-50/70 border border-rose-100 rounded-2xl p-5 mb-8 text-center relative overflow-hidden">
+            <p class="text-sm font-semibold text-rose-700 leading-relaxed">
+                Security violation prevented. Sharing or directly pasting continuation links is strictly prohibited.
+            </p>
         </div>
 
         <!-- Action Guide -->
@@ -107,17 +103,19 @@ BYPASS_DETECTED_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Footer / Action Button -->
+        <!-- Footer -->
         <div class="border-t border-slate-100 pt-6">
-            <p class="text-sm font-medium text-slate-500 mb-4">Please start again from the original shortlink.</p>
-            <button onclick="window.history.back()" class="w-full py-3.5 px-6 rounded-2xl font-semibold bg-gradient-to-r from-red-500 to-rose-600 text-white hover:from-red-600 hover:to-rose-700 active:scale-[0.98] transition shadow-lg shadow-rose-500/20 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2">
-                <i class="fa-solid fa-arrow-left mr-2"></i> Try Again / Go Back
-            </button>
+            <p class="text-md font-bold text-rose-600 mb-1">Please start again from the original shortlink.</p>
         </div>
     </div>
 </body>
 </html>
 """
+
+import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_client_ip(request: Request) -> str:
     # Check Cloudflare
@@ -133,6 +131,53 @@ def get_client_ip(request: Request) -> str:
             return parts[0].strip()
 
     return request.client.host if request.client else "unknown"
+
+async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str, request: Request, db):
+    try:
+        user = await db.users.find_one({"_id": user_id})
+        if not user or not user.get("telegram_id"):
+            return
+
+        telegram_id = user["telegram_id"]
+        bot_token = settings.TELEGRAM_BOT_TOKEN
+        if not bot_token:
+            return
+
+        # Fetch latest statistics for the user
+        total_requests = user.get("total_requests", 0)
+        success_count = user.get("success_count", 0)
+        blocked_count = user.get("blocked_count", 0)
+        referer_failures = user.get("referer_failures", 0)
+
+        # Get client details
+        client_ip = get_client_ip(request)
+        user_agent = request.headers.get("user-agent", "Unknown")
+
+        text = (
+            f"🚫 *BYPASS DETECTED*\n\n"
+            f"⚡ *Link Short ID:* `{short_id}`\n"
+            f"⚠️ *Reason:* `{reason}`\n\n"
+            f"ℹ️ *Client Information:*\n"
+            f"• *IP:* `{client_ip}`\n"
+            f"• *User-Agent:* `{user_agent}`\n\n"
+            f"📊 *Your Statistics:*\n"
+            f"• *Total Requests:* {total_requests}\n"
+            f"• *Successful:* {success_count}\n"
+            f"• *Blocked Attempts:* {blocked_count}\n"
+            f"• *Referer Failures:* {referer_failures}"
+        )
+
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": telegram_id,
+            "text": text,
+            "parse_mode": "Markdown"
+        }
+
+        async with httpx.AsyncClient() as client:
+            await client.post(url, json=payload, timeout=5.0)
+    except Exception as e:
+        logger.error(f"Failed to send Telegram notification: {e}")
 
 @app.get("/continue")
 async def continue_endpoint(
@@ -150,22 +195,32 @@ async def continue_endpoint(
     # Protection 1: Invalid/missing token
     if not session:
         return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Invalid token"),
+            content=BYPASS_DETECTED_TEMPLATE,
             status_code=403
         )
+
+    user_id_str = session.get("user_id")
+    user_id = ObjectId(user_id_str) if user_id_str else None
+    short_id = session.get("short_id", "unknown")
 
     # Protection 2: Expired verification sessions
     # Tokens expire after 300 seconds for slow networks
     if time.time() - session["created_at"] > 300:
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
         return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Expired verification session"),
+            content=BYPASS_DETECTED_TEMPLATE,
             status_code=403
         )
 
     # Protection 3: Reusing an already completed/consumed verification session
     if session.get("consumed", False):
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, "Token already used", request, db)
         return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Token already used"),
+            content=BYPASS_DETECTED_TEMPLATE,
             status_code=403
         )
 
@@ -182,8 +237,11 @@ async def continue_endpoint(
         else:
             reason = "Session validation failed"
 
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, reason, request, db)
         return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", reason),
+            content=BYPASS_DETECTED_TEMPLATE,
             status_code=403
         )
 
@@ -193,8 +251,11 @@ async def continue_endpoint(
         {"$set": {"consumed": True}}
     )
     if result.modified_count == 0:
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, "Token already used", request, db)
         return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Token already used"),
+            content=BYPASS_DETECTED_TEMPLATE,
             status_code=403
         )
 
@@ -270,9 +331,11 @@ async def original_shortlink(
             {"_id": user_id},
             {"$inc": {"referer_failures": 1, "blocked_count": 1}}
         )
+        # Send Telegram notification
+        await send_bypass_notification(user_id, short_id, "Invalid referer", request, db)
         # Return bypass detected page for invalid referer
         return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE.replace("{detected_reason}", "Invalid referer"),
+            content=BYPASS_DETECTED_TEMPLATE,
             status_code=403
         )
 
