@@ -224,8 +224,14 @@ async def process_api_key(message: types.Message, state: FSMContext):
         async with httpx.AsyncClient() as client:
             resp = await client.get(validate_url, timeout=5.0)
             if resp.status_code == 200:
-                result = resp.json()
-                if result.get("status") == "success" or result.get("short_url"):
+                try:
+                    result = resp.json()
+                    if isinstance(result, dict) and (result.get("status") == "error" or "error" in result):
+                        is_valid = False
+                    else:
+                        is_valid = True
+                except Exception:
+                    # Non-JSON or flat text url is also considered valid on 200 response
                     is_valid = True
     except Exception:
         pass
