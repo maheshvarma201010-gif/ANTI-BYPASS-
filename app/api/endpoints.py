@@ -29,7 +29,21 @@ async def create_protected_link(
     if not user:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # 1. Determine the specific shortener config
+    short_id = secrets.token_urlsafe(8)
+
+    # 1. Save the mapping
+    protected_link = {
+        "user_id": str(user['_id']),
+        "short_id": short_id,
+        "original_url": url,
+        "created_at": datetime.utcnow()
+    }
+    await db.protected_links.insert_one(protected_link)
+
+    # Update total requests
+    await db.users.update_one({"_id": user['_id']}, {"$inc": {"total_requests": 1}})
+
+    # 2. Call the real shortener
     shortener_config = None
     if user.get("api_key") == api:
         shortener_config = user.get("config")
@@ -47,21 +61,6 @@ async def create_protected_link(
 
     shortener_base = shortener_config['base_url']
     shortener_api = decrypt_url(shortener_config['api_key'])
-
-    short_id = secrets.token_urlsafe(8)
-
-    # 2. Save the mapping with the specific shortener base URL
-    protected_link = {
-        "user_id": str(user['_id']),
-        "short_id": short_id,
-        "original_url": url,
-        "shortener_base_url": shortener_base,
-        "created_at": datetime.utcnow()
-    }
-    await db.protected_links.insert_one(protected_link)
-
-    # Update total requests
-    await db.users.update_one({"_id": user['_id']}, {"$inc": {"total_requests": 1}})
 
     # Our bridge URL that the shortener will redirect to
     current_base = str(request.base_url).rstrip('/')

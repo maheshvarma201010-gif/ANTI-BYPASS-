@@ -110,12 +110,13 @@ async def cb_view_shortener(callback: types.CallbackQuery):
         return
 
     original_api_key = decrypt_url(shortener.get("api_key"))
+    base_url = shortener.get("base_url")
     abp_key = shortener.get("abp_key")
 
     await callback.message.answer(
         f"ℹ️ *Shortener Config Details:*\n\n"
         f"• *Name:* `{name}`\n"
-        f"• *Base URL:* {settings.BASE_URL}\n"
+        f"• *Base URL:* {base_url}\n"
         f"• *ABP API Key:* `{abp_key}`\n"
         f"• *Original API Key:* `{original_api_key}`",
         parse_mode="Markdown",
