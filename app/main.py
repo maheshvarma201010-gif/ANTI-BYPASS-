@@ -30,88 +30,406 @@ BYPASS_DETECTED_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bypass Detected - Security Violation</title>
-    <!-- Include Tailwind CSS via CDN -->
+    <meta name="theme-color" content="#09090b">
+    <meta name="robots" content="noindex, nofollow, noarchive">
+    <title>⛔ Bypass Detected — Access Blocked</title>
+
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
+
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
         body {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            background: radial-gradient(circle at top right, #fff5f5, #ffffff);
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Inter', sans-serif;
+            color: #f4f4f5;
+            background:
+                radial-gradient(circle at 50% -10%, rgba(239, 68, 68, 0.22), transparent 35%),
+                radial-gradient(circle at 10% 90%, rgba(127, 29, 29, 0.18), transparent 30%),
+                #09090b;
+            overflow-x: hidden;
         }
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(229, 62, 62, 0.15);
+
+        .ambient {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background:
+                linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+            background-size: 40px 40px;
+            mask-image: linear-gradient(to bottom, black, transparent);
         }
-        .animate-bounce-slow {
-            animation: bounce 2s infinite;
+
+        .security-card {
+            position: relative;
+            background:
+                linear-gradient(
+                    145deg,
+                    rgba(24, 24, 27, 0.96),
+                    rgba(9, 9, 11, 0.98)
+                );
+            border: 1px solid rgba(239, 68, 68, 0.28);
+            box-shadow:
+                0 30px 100px rgba(0, 0, 0, 0.65),
+                0 0 80px rgba(220, 38, 38, 0.10),
+                inset 0 1px 0 rgba(255,255,255,0.04);
+            backdrop-filter: blur(20px);
         }
-        @keyframes bounce {
+
+        .security-card::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            pointer-events: none;
+            background:
+                linear-gradient(
+                    135deg,
+                    rgba(239, 68, 68, 0.08),
+                    transparent 30%,
+                    transparent 70%,
+                    rgba(239, 68, 68, 0.04)
+                );
+        }
+
+        .top-line {
+            height: 4px;
+            background: linear-gradient(
+                90deg,
+                #7f1d1d,
+                #ef4444,
+                #fca5a5,
+                #ef4444,
+                #7f1d1d
+            );
+            box-shadow: 0 0 25px rgba(239, 68, 68, 0.55);
+        }
+
+        .warning-icon {
+            position: relative;
+            width: 104px;
+            height: 104px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle, rgba(127,29,29,0.95), rgba(69,10,10,0.85));
+            border: 2px solid rgba(248,113,113,0.65);
+            box-shadow:
+                0 0 0 8px rgba(239,68,68,0.05),
+                0 0 45px rgba(239,68,68,0.25),
+                inset 0 0 30px rgba(239,68,68,0.12);
+            animation: iconPulse 2s ease-in-out infinite;
+        }
+
+        .warning-icon::before,
+        .warning-icon::after {
+            content: "";
+            position: absolute;
+            inset: -10px;
+            border: 1px solid rgba(239,68,68,0.18);
+            border-radius: 50%;
+            animation: ring 2.2s ease-out infinite;
+        }
+
+        .warning-icon::after {
+            animation-delay: 1.1s;
+        }
+
+        .warning-icon i {
+            color: #f87171;
+            font-size: 42px;
+            filter: drop-shadow(0 0 14px rgba(239,68,68,0.8));
+            animation: warningBlink 1.6s ease-in-out infinite;
+        }
+
+        @keyframes iconPulse {
             0%, 100% {
-                transform: translateY(-5%);
-                animation-timing-function: cubic-bezier(0.8,0,1,1);
+                transform: scale(1);
             }
             50% {
-                transform: none;
-                animation-timing-function: cubic-bezier(0,0,0.2,1);
+                transform: scale(1.035);
+            }
+        }
+
+        @keyframes warningBlink {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.65;
+            }
+        }
+
+        @keyframes ring {
+            0% {
+                transform: scale(0.85);
+                opacity: 0.65;
+            }
+            100% {
+                transform: scale(1.45);
+                opacity: 0;
+            }
+        }
+
+        .danger-text {
+            background: linear-gradient(90deg, #f87171, #fecaca, #f87171);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: gradientMove 3s linear infinite;
+        }
+
+        @keyframes gradientMove {
+            to {
+                background-position: 200% center;
+            }
+        }
+
+        .alert-box {
+            background:
+                linear-gradient(
+                    135deg,
+                    rgba(127,29,29,0.25),
+                    rgba(69,10,10,0.12)
+                );
+            border: 1px solid rgba(248,113,113,0.25);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.025);
+        }
+
+        .reason-box {
+            background: rgba(3, 3, 5, 0.62);
+            border: 1px solid rgba(127, 29, 29, 0.55);
+        }
+
+        .reason-item {
+            transition: all 0.2s ease;
+        }
+
+        .reason-item:hover {
+            transform: translateX(4px);
+        }
+
+        .reason-icon {
+            width: 30px;
+            height: 30px;
+            min-width: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 9px;
+            background: rgba(127,29,29,0.35);
+            border: 1px solid rgba(239,68,68,0.20);
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #ef4444;
+            box-shadow: 0 0 12px #ef4444;
+            animation: dotPulse 1.5s infinite;
+        }
+
+        @keyframes dotPulse {
+            50% {
+                opacity: 0.35;
+                transform: scale(0.75);
+            }
+        }
+
+        .scan-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(239,68,68,0.5),
+                transparent
+            );
+            animation: scan 4s linear infinite;
+            pointer-events: none;
+        }
+
+        @keyframes scan {
+            0% {
+                top: 8%;
+                opacity: 0;
+            }
+            15% {
+                opacity: 1;
+            }
+            85% {
+                opacity: 1;
+            }
+            100% {
+                top: 92%;
+                opacity: 0;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation: none !important;
+                transition: none !important;
             }
         }
     </style>
 </head>
-<body class="min-h-screen flex items-center justify-center p-4 bg-slate-50">
-    <div class="w-full max-w-lg glass-panel rounded-3xl shadow-2xl overflow-hidden p-8 md:p-10 text-center relative border border-rose-100">
-        <!-- Top Decorative Gradient Bar -->
-        <div class="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-red-500 via-rose-500 to-orange-500"></div>
 
-        <!-- Shield / Warning Icon -->
-        <div class="mx-auto w-24 h-24 mb-6 bg-rose-50 rounded-full flex items-center justify-center border-4 border-rose-100 animate-bounce-slow shadow-sm">
-            <span class="text-rose-500 text-4xl"><i class="fa-solid fa-shield-halved"></i></span>
-        </div>
+<body class="min-h-screen flex items-center justify-center p-4 sm:p-6">
 
-        <!-- Heading -->
-        <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight mb-3">
-            🚫 BYPASS DETECTED
-        </h1>
-        <p class="text-slate-500 text-md leading-relaxed mb-6">
-            Our multi-layer security system has intercepted an abnormal request that violates session validation policies.
+    <div class="ambient"></div>
+
+    <main class="w-full max-w-xl relative z-10">
+
+        <section class="security-card rounded-[28px] overflow-hidden">
+
+            <div class="top-line"></div>
+            <div class="scan-line"></div>
+
+            <div class="relative p-6 sm:p-9 md:p-10">
+
+                <!-- Security Status -->
+                <div class="flex items-center justify-center gap-2 mb-7">
+                    <span class="status-dot"></span>
+                    <span class="text-[10px] sm:text-xs font-bold uppercase tracking-[0.22em] text-red-400">
+                        Security System • Access Blocked
+                    </span>
+                </div>
+
+                <!-- Warning Icon -->
+                <div class="warning-icon mb-7">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+
+                <!-- Main Heading -->
+                <h1 class="danger-text text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-center leading-tight">
+                    BYPASS DETECTED
+                </h1>
+
+                <p class="text-center text-zinc-400 text-xs sm:text-sm font-semibold uppercase tracking-[0.14em] mt-3">
+                    Unauthorized access attempt detected
+                </p>
+
+                <!-- Alert -->
+                <div class="alert-box rounded-2xl p-5 mt-7">
+                    <div class="flex gap-3 items-start">
+                        <div class="text-red-400 text-lg mt-0.5">
+                            <i class="fa-solid fa-shield-halved"></i>
+                        </div>
+
+                        <div class="text-left">
+                            <h2 class="text-sm font-bold text-red-300 mb-1">
+                                Security verification failed
+                            </h2>
+
+                            <p class="text-xs sm:text-sm leading-6 text-zinc-300">
+                                This request did not follow the required access flow.
+                                The attempt has been blocked and the security event has been recorded.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detection Reasons -->
+                <div class="reason-box rounded-2xl p-5 mt-5">
+
+                    <div class="flex items-center gap-2 mb-4">
+                        <i class="fa-solid fa-fingerprint text-red-400"></i>
+
+                        <span class="text-[11px] font-extrabold uppercase tracking-[0.16em] text-red-400">
+                            Possible causes
+                        </span>
+                    </div>
+
+                    <div class="space-y-3">
+
+                        <div class="reason-item flex items-start gap-3">
+                            <div class="reason-icon text-red-400 text-xs">
+                                <i class="fa-solid fa-link-slash"></i>
+                            </div>
+
+                            <p class="text-xs sm:text-sm text-zinc-300 leading-5">
+                                A continuation or verification link was pasted, shared, or reused directly.
+                            </p>
+                        </div>
+
+                        <div class="reason-item flex items-start gap-3">
+                            <div class="reason-icon text-red-400 text-xs">
+                                <i class="fa-solid fa-forward"></i>
+                            </div>
+
+                            <p class="text-xs sm:text-sm text-zinc-300 leading-5">
+                                The required shortlink or verification step was skipped.
+                            </p>
+                        </div>
+
+                        <div class="reason-item flex items-start gap-3">
+                            <div class="reason-icon text-red-400 text-xs">
+                                <i class="fa-solid fa-robot"></i>
+                            </div>
+
+                            <p class="text-xs sm:text-sm text-zinc-300 leading-5">
+                                Automated, modified, or invalid session information was detected.
+                            </p>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Action -->
+                <div class="mt-7 pt-6 border-t border-zinc-800/80 text-center">
+
+                    <div class="inline-flex items-center gap-2 text-red-400 font-black text-sm sm:text-base uppercase tracking-wide">
+                        <i class="fa-solid fa-rotate-left"></i>
+                        Start the process again
+                    </div>
+
+                    <p class="text-xs text-zinc-500 mt-2 leading-5">
+                        Return to the original link and complete the verification process normally.
+                    </p>
+
+                </div>
+
+                <!-- Footer -->
+                <div class="mt-7 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.16em] text-zinc-600">
+                    <i class="fa-solid fa-lock"></i>
+                    <span>Protected Access System</span>
+                    <span class="text-zinc-700">•</span>
+                    <span>Event Logged</span>
+                </div>
+
+            </div>
+        </section>
+
+        <p class="text-center text-[10px] text-zinc-700 mt-4">
+            Unauthorized access attempts may be automatically monitored.
         </p>
 
-        <!-- Instruction / Info Card -->
-        <div class="bg-rose-50/70 border border-rose-100 rounded-2xl p-5 mb-8 text-center relative overflow-hidden">
-            <p class="text-sm font-semibold text-rose-700 leading-relaxed">
-                Security violation prevented. Sharing or directly pasting continuation links is strictly prohibited.
-            </p>
-        </div>
+    </main>
 
-        <!-- Action Guide -->
-        <div class="text-left mb-8 space-y-3 bg-slate-50 border border-slate-100 rounded-2xl p-5">
-            <span class="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2">How to continue safely</span>
-            <div class="flex items-start gap-3 text-sm text-slate-600">
-                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
-                <p>Go back to the <strong>original source</strong> where the link was shared.</p>
-            </div>
-            <div class="flex items-start gap-3 text-sm text-slate-600">
-                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
-                <p>Click the <strong>original shortlink</strong> directly to initialize a secure session.</p>
-            </div>
-            <div class="flex items-start gap-3 text-sm text-slate-600">
-                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
-                <p>Do not share, bookmark, or directly copy the continuation URL.</p>
-            </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="border-t border-slate-100 pt-6">
-            <p class="text-md font-bold text-rose-600 mb-1">Please start again from the original shortlink.</p>
-        </div>
-    </div>
 </body>
 </html>
 """
-
 import httpx
 import logging
 
