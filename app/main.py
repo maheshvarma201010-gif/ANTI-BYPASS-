@@ -33,7 +33,7 @@ BYPASS_DETECTED_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#03000a">
     <meta name="robots" content="noindex, nofollow, noarchive">
-    <title>Security Verification Failed</title>
+    <title>Security Sandboxed</title>
 
     <script>
         (function() {
@@ -68,7 +68,7 @@ BYPASS_DETECTED_TEMPLATE = """
             font-family: 'Plus Jakarta Sans', sans-serif;
             color: #f4f4f5;
             background:
-                radial-gradient(circle at 50% -20%, rgba(220, 38, 38, 0.15), transparent 45%),
+                radial-gradient(circle at 50% -20%, rgba(220, 38, 38, 0.2), transparent 45%),
                 radial-gradient(circle at 10% 90%, rgba(15, 23, 42, 0.4), transparent 35%),
                 #03000a;
             overflow-x: hidden;
@@ -83,9 +83,9 @@ BYPASS_DETECTED_TEMPLATE = """
             inset: 0;
             pointer-events: none;
             background-image:
-                linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
-            background-size: 50px 50px;
+                linear-gradient(rgba(255, 255, 255, 0.01) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
+            background-size: 40px 40px;
             mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
             z-index: 0;
         }
@@ -98,14 +98,14 @@ BYPASS_DETECTED_TEMPLATE = """
         }
 
         .premium-card {
-            background: linear-gradient(135deg, rgba(15, 10, 25, 0.7) 0%, rgba(5, 2, 10, 0.8) 100%);
-            border: 1px solid rgba(220, 38, 38, 0.2);
+            background: linear-gradient(135deg, rgba(15, 10, 25, 0.8) 0%, rgba(5, 2, 10, 0.95) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.25);
             box-shadow:
-                0 40px 100px -30px rgba(0, 0, 0, 0.8),
-                0 0 50px -10px rgba(220, 38, 38, 0.1),
+                0 40px 100px -30px rgba(0, 0, 0, 0.95),
+                0 0 50px -10px rgba(239, 68, 68, 0.15),
                 inset 0 1px 1px rgba(255, 255, 255, 0.03);
             backdrop-filter: blur(25px);
-            border-radius: 24px;
+            border-radius: 28px;
             padding: 48px;
             text-align: center;
             position: relative;
@@ -115,19 +115,19 @@ BYPASS_DETECTED_TEMPLATE = """
         .card-glow {
             position: absolute;
             top: 0;
-            left: 25%;
-            width: 50%;
+            left: 20%;
+            width: 60%;
             height: 2px;
-            background: linear-gradient(90deg, transparent, rgba(220, 38, 38, 0.5), transparent);
-            box-shadow: 0 0 20px rgba(220, 38, 38, 0.4);
+            background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.6), transparent);
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
         }
 
         .shimmer {
-            font-size: 28px;
+            font-size: 26px;
             font-weight: 800;
             margin: 0 0 16px 0;
             letter-spacing: -0.02em;
-            background: linear-gradient(90deg, #ef4444, #fca5a5, #ef4444);
+            background: linear-gradient(90deg, #ef4444, #f87171, #ef4444);
             background-size: 200% auto;
             -webkit-background-clip: text;
             background-clip: text;
@@ -141,60 +141,61 @@ BYPASS_DETECTED_TEMPLATE = """
 
         .shield-container {
             position: relative;
-            width: 90px;
-            height: 90px;
-            margin: 0 auto 24px auto;
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 28px auto;
             display: flex;
             align-items: center;
             justify-content: center;
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(220, 38, 38, 0.1) 0%, rgba(220, 38, 38, 0.02) 100%);
-            border: 1px solid rgba(220, 38, 38, 0.3);
-            box-shadow: 0 0 30px rgba(220, 38, 38, 0.05);
+            background: radial-gradient(circle, rgba(239, 68, 68, 0.15) 0%, rgba(239, 68, 68, 0.02) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            box-shadow: 0 0 35px rgba(239, 68, 68, 0.1);
         }
 
         .shield-svg {
-            width: 38px;
-            height: 38px;
+            width: 44px;
+            height: 44px;
             fill: #ef4444;
-            filter: drop-shadow(0 0 10px rgba(220, 38, 38, 0.5));
+            filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.6));
         }
 
         .status-badge {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            background: rgba(220, 38, 38, 0.08);
-            border: 1px solid rgba(220, 38, 38, 0.15);
-            padding: 6px 14px;
+            gap: 8px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            padding: 8px 18px;
             border-radius: 100px;
             font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.1em;
+            font-weight: 700;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
             color: #f87171;
             margin-bottom: 32px;
         }
 
         .status-dot {
-            width: 6px;
-            height: 6px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             background: #ef4444;
-            box-shadow: 0 0 8px #ef4444;
-            animation: pulse 2s infinite;
+            box-shadow: 0 0 10px #ef4444;
+            animation: pulse 1.5s infinite;
         }
 
         @keyframes pulse {
             0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.2); opacity: 0.5; }
+            50% { transform: scale(1.25); opacity: 0.4; }
         }
 
         .desc-text {
-            color: #a1a1aa;
-            font-size: 15px;
+            color: #e4e4e7;
+            font-size: 16px;
             line-height: 1.6;
             margin: 0 0 32px 0;
+            font-weight: 500;
         }
 
         .footer-line {
@@ -211,8 +212,8 @@ BYPASS_DETECTED_TEMPLATE = """
         }
 
         .lock-svg {
-            width: 12px;
-            height: 12px;
+            width: 14px;
+            height: 14px;
             fill: #71717a;
         }
 
@@ -220,7 +221,7 @@ BYPASS_DETECTED_TEMPLATE = """
             text-align: center;
             font-size: 10px;
             color: #52525b;
-            margin-top: 24px;
+            margin-top: 28px;
             letter-spacing: 0.05em;
         }
     </style>
@@ -239,35 +240,34 @@ BYPASS_DETECTED_TEMPLATE = """
             <div>
                 <div class="status-badge">
                     <span class="status-dot"></span>
-                    Verification Error
+                    Bypass Intercepted
                 </div>
             </div>
 
             <div class="shield-container">
                 <svg class="shield-svg" viewBox="0 0 24 24">
-                    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
                 </svg>
             </div>
 
             <h1 class="shimmer">
-                Access Restricted
+                Nice Try, Noob!
             </h1>
 
             <p class="desc-text">
-                This request did not satisfy the automated security requirements necessary to complete the redirection.
-                Please make sure you are accessing this link from its original and authorized source.
+                NOOB, these bloody tricks do not work in front of the Lord, because the Lord is a pro!
             </p>
 
             <div class="footer-line">
                 <svg class="lock-svg" viewBox="0 0 24 24">
                     <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
                 </svg>
-                Secure Redirection Protection
+                Lordly Redirection Shield
             </div>
         </section>
 
         <p class="sub-footer">
-            Unauthorized access attempts are logged for security.
+            Bypass attempts are automatically neutralized.
         </p>
     </main>
 
