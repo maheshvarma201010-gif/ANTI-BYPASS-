@@ -456,6 +456,7 @@ async def test_original_shortlink_nicktrick_blocked():
 async def test_blocked_page_serves_html():
     from app.main import blocked_page
     request = MagicMock(spec=Request)
+    request.query_params = {}
     response = await blocked_page(request)
     assert response.status_code == 403
     body = response.body.decode()
@@ -463,3 +464,14 @@ async def test_blocked_page_serves_html():
     # Confirm our frozen tamper script protections are injected
     assert "onTamper" in body
     assert "Object.defineProperty" in body
+
+
+@pytest.mark.asyncio
+async def test_blocked_page_redirects_if_query_params_present():
+    from app.main import blocked_page
+    request = MagicMock(spec=Request)
+    request.query_params = {"nicktrick": "https://payload.com"}
+    response = await blocked_page(request)
+    # It must return a 302 redirect to /blocked without query parameters
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
