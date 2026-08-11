@@ -35,6 +35,19 @@ BYPASS_DETECTED_TEMPLATE = """
     <meta name="robots" content="noindex, nofollow, noarchive">
     <title>Security Verification Failed</title>
 
+    <script>
+        (function() {
+            try {
+                const onTamper = function() {
+                    throw new Error("Security Sandbox: Document open/write is prohibited on this secure resource.");
+                };
+                Object.defineProperty(document, 'open', { value: onTamper, writable: false, configurable: false });
+                Object.defineProperty(document, 'write', { value: onTamper, writable: false, configurable: false });
+                Object.defineProperty(document, 'writeln', { value: onTamper, writable: false, configurable: false });
+            } catch(e) {}
+        })();
+    </script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 
@@ -907,6 +920,13 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
     return False, ""
 
+@app.get("/blocked")
+async def blocked_page(request: Request):
+    return HTMLResponse(
+        content=BYPASS_DETECTED_TEMPLATE,
+        status_code=403
+    )
+
 @app.get("/continue")
 async def continue_endpoint(
     request: Request,
@@ -925,10 +945,7 @@ async def continue_endpoint(
             if user_id:
                 await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
                 await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
@@ -937,20 +954,14 @@ async def continue_endpoint(
 
     # Direct paste/share protection of the redirect URL: Referer must be present on internal continuation redirect
     if not referer:
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     # Retrieve session bound to token
     session = await db.sessions.find_one({"token": token})
 
     # Protection 1: Invalid/missing token
     if not session:
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     user_id_str = session.get("user_id")
     user_id = ObjectId(user_id_str) if user_id_str else None
@@ -962,20 +973,14 @@ async def continue_endpoint(
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     # Protection 3: Reusing an already completed/consumed verification session
     if session.get("consumed", False):
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Token already used", request, db)
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     # Protection 4: Session validation (either Cookie match OR fallback to IP+UA match if cookies blocked/incognito)
     cookie_valid = cookie_session_id and cookie_session_id == session["session_id"]
@@ -993,10 +998,7 @@ async def continue_endpoint(
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, reason, request, db)
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     # Consume/invalidate token atomically server-side to prevent TOCTOU race conditions / parallel replay
     result = await db.sessions.update_one(
@@ -1007,10 +1009,7 @@ async def continue_endpoint(
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Token already used", request, db)
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     # Retrieve real/original destination URL
     destination_url = session["original_url"]
@@ -1110,10 +1109,7 @@ async def original_shortlink(
             user_id = ObjectId(link['user_id'])
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     # 1. Fetch the mapping
     link = await db.protected_links.find_one({"short_id": short_id})
@@ -1178,10 +1174,7 @@ async def original_shortlink(
         # Send Telegram notification
         await send_bypass_notification(user_id, short_id, "Invalid referer", request, db)
         # Return bypass detected page for invalid referer
-        return HTMLResponse(
-            content=BYPASS_DETECTED_TEMPLATE,
-            status_code=403
-        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     # 2. Referer validated! Create a secure, short-lived server-side session.
     session_id = secrets.token_urlsafe(32)

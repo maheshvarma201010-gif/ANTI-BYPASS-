@@ -121,8 +121,10 @@ async def test_session_mismatch():
     }
 
     response = await continue_endpoint(request, "valid_token", db)
-    assert response.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response.body.decode()
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
 
 
 @pytest.mark.asyncio
@@ -149,8 +151,10 @@ async def test_expired_session():
     }
 
     response = await continue_endpoint(request, "valid_token", db)
-    assert response.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response.body.decode()
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
 
 
 @pytest.mark.asyncio
@@ -213,8 +217,8 @@ async def test_invalid_token_direct_continuation():
     db.sessions.find_one.return_value = None
 
     response = await continue_endpoint(request, "non_existent_token", db)
-    assert response.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response.body.decode()
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
 
 
 @pytest.mark.asyncio
@@ -229,8 +233,10 @@ async def test_continue_endpoint_empty_referer_blocked_direct_paste():
     request.cookies = {"session_id": "cookie_id"}
 
     response = await continue_endpoint(request, "valid_token", db)
-    assert response.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response.body.decode()
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
 
 
 @pytest.mark.asyncio
@@ -257,8 +263,8 @@ async def test_reused_token():
     }
 
     response = await continue_endpoint(request, "valid_token", db)
-    assert response.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response.body.decode()
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
 
 
 @pytest.mark.asyncio
@@ -304,8 +310,10 @@ async def test_invalid_referer():
     request.base_url = "https://my-app.com"
 
     response = await original_shortlink(request, short_id, db)
-    assert response.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response.body.decode()
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
 
 
 @pytest.mark.asyncio
@@ -332,8 +340,8 @@ async def test_absolute_url_query_parameter_injection_blocked():
     request.query_params = {"any_key": "https://target-payload.com"}
 
     response = await original_shortlink(request, short_id, db)
-    assert response.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response.body.decode()
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
 
 
 @pytest.mark.asyncio
@@ -363,8 +371,8 @@ async def test_blocked_greasyfork_userscript_urls():
     }
 
     response1 = await original_shortlink(request1, short_id, db)
-    assert response1.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response1.body.decode()
+    assert response1.status_code == 302
+    assert response1.headers["location"] == "/blocked"
 
     # Test 2: Banned userscript URL with spaces in Referer
     request2 = MagicMock(spec=Request)
@@ -376,8 +384,8 @@ async def test_blocked_greasyfork_userscript_urls():
     }
 
     response2 = await original_shortlink(request2, short_id, db)
-    assert response2.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response2.body.decode()
+    assert response2.status_code == 302
+    assert response2.headers["location"] == "/blocked"
 
 
 @pytest.mark.asyncio
@@ -440,5 +448,18 @@ async def test_original_shortlink_nicktrick_blocked():
     request.query_params = {"nicktrick": "some_payload"}
 
     response = await original_shortlink(request, short_id, db)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+
+
+@pytest.mark.asyncio
+async def test_blocked_page_serves_html():
+    from app.main import blocked_page
+    request = MagicMock(spec=Request)
+    response = await blocked_page(request)
     assert response.status_code == 403
-    assert "🚫 BYPASS DETECTED" in response.body.decode()
+    body = response.body.decode()
+    assert "🚫 BYPASS DETECTED" in body
+    # Confirm our frozen tamper script protections are injected
+    assert "onTamper" in body
+    assert "Object.defineProperty" in body
