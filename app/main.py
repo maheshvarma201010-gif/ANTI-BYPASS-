@@ -30,91 +30,82 @@ BYPASS_DETECTED_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>⛔ BYPASS DETECTED — SECURITY BREACH LOGGED</title>
+    <title>Bypass Detected - Security Violation</title>
+    <!-- Include Tailwind CSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
         body {
             font-family: 'Plus Jakarta Sans', sans-serif;
-            background: radial-gradient(circle at top, #7f0000, #1a0000 70%);
-            background-color: #1a0000;
+            background: radial-gradient(circle at top right, #fff5f5, #ffffff);
         }
         .glass-panel {
-            background: rgba(20, 0, 0, 0.85);
-            backdrop-filter: blur(10px);
-            border: 2px solid rgba(255, 0, 0, 0.5);
-            box-shadow: 0 0 60px rgba(255,0,0,0.35), inset 0 0 40px rgba(255,0,0,0.08);
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(229, 62, 62, 0.15);
         }
-        .siren { animation: siren 1s infinite; }
-        @keyframes siren {
-            0%, 100% { color: #ff1a1a; text-shadow: 0 0 20px #ff0000; }
-            50% { color: #ff6666; text-shadow: 0 0 40px #ff0000, 0 0 10px #fff; }
+        .animate-bounce-slow {
+            animation: bounce 2s infinite;
         }
-        .pulse-ring {
-            animation: pulse-ring 1.4s cubic-bezier(0.4,0,0.6,1) infinite;
-        }
-        @keyframes pulse-ring {
-            0% { box-shadow: 0 0 0 0 rgba(255,0,0,0.7); }
-            70% { box-shadow: 0 0 0 25px rgba(255,0,0,0); }
-            100% { box-shadow: 0 0 0 0 rgba(255,0,0,0); }
-        }
-        .shake { animation: shake 0.4s ease-in-out infinite; }
-        @keyframes shake {
-            0%,100% { transform: translateX(0); }
-            25% { transform: translateX(-2px) rotate(-0.5deg); }
-            75% { transform: translateX(2px) rotate(0.5deg); }
-        }
-        .stripe-bar {
-            background: repeating-linear-gradient(45deg, #ff0000, #ff0000 12px, #1a0000 12px, #1a0000 24px);
+        @keyframes bounce {
+            0%, 100% {
+                transform: translateY(-5%);
+                animation-timing-function: cubic-bezier(0.8,0,1,1);
+            }
+            50% {
+                transform: none;
+                animation-timing-function: cubic-bezier(0,0,0.2,1);
+            }
         }
     </style>
 </head>
-<body class="min-h-screen flex items-center justify-center p-4">
-    <div class="w-full max-w-lg glass-panel rounded-3xl overflow-hidden p-8 md:p-10 text-center relative">
-        <div class="absolute top-0 left-0 right-0 h-3 stripe-bar"></div>
+<body class="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+    <div class="w-full max-w-lg glass-panel rounded-3xl shadow-2xl overflow-hidden p-8 md:p-10 text-center relative border border-rose-100">
+        <!-- Top Decorative Gradient Bar -->
+        <div class="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-red-500 via-rose-500 to-orange-500"></div>
 
-        <div class="mx-auto w-28 h-28 mb-6 mt-2 bg-red-950 rounded-full flex items-center justify-center border-4 border-red-600 pulse-ring shake">
-            <span class="siren text-5xl"><i class="fa-solid fa-triangle-exclamation"></i></span>
+        <!-- Shield / Warning Icon -->
+        <div class="mx-auto w-24 h-24 mb-6 bg-rose-50 rounded-full flex items-center justify-center border-4 border-rose-100 animate-bounce-slow shadow-sm">
+            <span class="text-rose-500 text-4xl"><i class="fa-solid fa-shield-halved"></i></span>
         </div>
 
-        <h1 class="text-4xl font-extrabold tracking-tight mb-2 siren">
-            ⛔ BYPASS DETECTED
+        <!-- Heading -->
+        <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight mb-3">
+            🚫 BYPASS DETECTED
         </h1>
-        <p class="text-red-300 text-sm font-bold uppercase tracking-widest mb-6">
-            Unauthorized Access Attempt — Logged &amp; Reported
+        <p class="text-slate-500 text-md leading-relaxed mb-6">
+            Our multi-layer security system has intercepted an abnormal request that violates session validation policies.
         </p>
 
-        <div class="bg-red-950/80 border-2 border-red-600 rounded-2xl p-5 mb-6">
-            <p class="text-sm font-bold text-red-200 leading-relaxed">
-                🚨 Our security system has flagged this request as a deliberate circumvention attempt.
-                This incident has been recorded, timestamped, and reported to the link owner.
+        <!-- Instruction / Info Card -->
+        <div class="bg-rose-50/70 border border-rose-100 rounded-2xl p-5 mb-8 text-center relative overflow-hidden">
+            <p class="text-sm font-semibold text-rose-700 leading-relaxed">
+                Security violation prevented. Sharing or directly pasting continuation links is strictly prohibited.
             </p>
         </div>
 
-        <div class="text-left mb-8 space-y-3 bg-black/40 border border-red-800 rounded-2xl p-5">
-            <span class="text-xs font-bold uppercase tracking-wider text-red-400 block mb-2">
-                <i class="fa-solid fa-skull"></i> This will keep happening if you:
-            </span>
-            <div class="flex items-start gap-3 text-sm text-red-200">
-                <span class="text-red-500 mt-0.5"><i class="fa-solid fa-xmark"></i></span>
-                <p>Paste, share, or bookmark the continuation link.</p>
+        <!-- Action Guide -->
+        <div class="text-left mb-8 space-y-3 bg-slate-50 border border-slate-100 rounded-2xl p-5">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2">How to continue safely</span>
+            <div class="flex items-start gap-3 text-sm text-slate-600">
+                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
+                <p>Go back to the <strong>original source</strong> where the link was shared.</p>
             </div>
-            <div class="flex items-start gap-3 text-sm text-red-200">
-                <span class="text-red-500 mt-0.5"><i class="fa-solid fa-xmark"></i></span>
-                <p>Skip the original shortlink and jump straight to this page.</p>
+            <div class="flex items-start gap-3 text-sm text-slate-600">
+                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
+                <p>Click the <strong>original shortlink</strong> directly to initialize a secure session.</p>
             </div>
-            <div class="flex items-start gap-3 text-sm text-red-200">
-                <span class="text-red-500 mt-0.5"><i class="fa-solid fa-xmark"></i></span>
-                <p>Use a bot, script, or bypass tool to fake a session.</p>
+            <div class="flex items-start gap-3 text-sm text-slate-600">
+                <span class="text-emerald-500 mt-0.5"><i class="fa-solid fa-circle-check"></i></span>
+                <p>Do not share, bookmark, or directly copy the continuation URL.</p>
             </div>
         </div>
 
-        <div class="border-t-2 border-red-800 pt-6">
-            <p class="text-lg font-extrabold text-red-400 mb-1 siren">
-                GO BACK. START OVER. NO SHORTCUTS.
-            </p>
-            <p class="text-xs text-red-500/70 mt-2">Incident ID logged for review.</p>
+        <!-- Footer -->
+        <div class="border-t border-slate-100 pt-6">
+            <p class="text-md font-bold text-rose-600 mb-1">Please start again from the original shortlink.</p>
         </div>
     </div>
 </body>
@@ -282,24 +273,64 @@ async def continue_endpoint(
     # Redirect to the final destination
     return RedirectResponse(url=destination_url, status_code=302)
 
+
 def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
+    """
+    Compares the registrable "root" domain name of the incoming Referer
+    against the configured shortener domain, tolerant of:
+      - subdomains on either side (www., link., go., s1., publisher., etc.)
+      - alternate TLDs for the same brand (arolinks.com vs arolinks.co)
+      - multi-label TLDs (e.g. .co.in, .com.br)
+    """
     if not ref_netloc or not shortener_domain:
         return False
 
     def get_root_name(domain: str) -> str:
-        parts = domain.split('.')
-        common_tlds = {"com", "co", "net", "org", "info", "io", "in", "xyz", "biz", "us", "uk", "cc", "me", "top", "online", "site", "live", "club", "tech", "work"}
-        valid_parts = [p for p in parts if p not in common_tlds and p != "www" and p != "link" and p != "st" and p != "api"]
-        if valid_parts:
-            return valid_parts[0]
-        return parts[0]
+        # Strip port if present (e.g. example.com:8443)
+        domain = domain.split(":")[0]
+        parts = [p for p in domain.split(".") if p]
+
+        common_tlds = {
+            "com", "co", "net", "org", "info", "io", "in", "xyz",
+            "biz", "us", "uk", "cc", "me", "top", "online", "site",
+            "live", "club", "tech", "work"
+        }
+
+        # Strip trailing TLD label(s) from the end of the domain.
+        # This correctly handles both single-label TLDs (.com) and
+        # stacked ones (.co.in, .com.br) without misreading a
+        # leading subdomain (go., link., s1., publisher., ...) as
+        # the actual brand/root name.
+        while len(parts) > 1 and parts[-1] in common_tlds:
+            parts = parts[:-1]
+
+        if not parts:
+            return domain
+
+        # The label immediately preceding the TLD is the true root
+        # (registrable) domain name, regardless of how many
+        # subdomain labels came before it.
+        return parts[-1]
 
     shortener_root = get_root_name(shortener_domain).lower()
     ref_root = get_root_name(ref_netloc).lower()
 
-    if shortener_root and ref_root and (shortener_root in ref_netloc or ref_root in shortener_domain):
+    if not shortener_root or not ref_root:
+        return False
+
+    # Exact root match (preferred) — e.g. "arolinks" == "arolinks"
+    if shortener_root == ref_root:
         return True
+
+    # Fallback: containment check, but only against the *root* labels
+    # (not the full netloc/domain strings) to reduce false positives
+    # from unrelated domains that merely happen to contain the brand
+    # name as a substring somewhere in a subdomain.
+    if shortener_root in ref_root or ref_root in shortener_root:
+        return True
+
     return False
+
 
 @app.get("/{short_id}")
 async def original_shortlink(
@@ -429,3 +460,4 @@ async def original_shortlink(
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
