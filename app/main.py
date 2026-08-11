@@ -37,6 +37,13 @@ BYPASS_DETECTED_TEMPLATE = """
 
     <script>
         (function() {
+            // Immediately strip any query parameters or hash from the address bar to prevent bookmarklet exploitation
+            try {
+                if (window.location.search || window.location.hash) {
+                    window.history.replaceState(null, "", window.location.pathname);
+                }
+            } catch(e) {}
+
             try {
                 const onTamper = function() {
                     throw new Error("Security Sandbox: Document open/write is prohibited on this secure resource.");
@@ -562,6 +569,19 @@ GATEWAY_TEMPLATE = """
                 try { document.currentScript.remove(); } catch(e) {}
             }
 
+            // Immediately strip any other query parameters and the hash fragment from the address bar to thwart bookmarklets
+            try {
+                const url = new URL(window.location.href);
+                const token = url.searchParams.get("token");
+                let newSearch = "";
+                if (token) {
+                    newSearch = "?token=" + encodeURIComponent(token);
+                }
+                if (url.hash || url.search !== newSearch) {
+                    window.history.replaceState(null, "", window.location.pathname + newSearch);
+                }
+            } catch(e) {}
+
             const ENCODED_DEST = "{encoded_url}";
             const steps = [
                 { percent: 15, text: "Analyzing headers..." },
@@ -922,6 +942,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
 @app.get("/blocked")
 async def blocked_page(request: Request):
+    # If there are any query parameters, redirect to clean /blocked URL to strip them from the address bar
+    if request.query_params:
+        return RedirectResponse(url="/blocked", status_code=302)
     return HTMLResponse(
         content=BYPASS_DETECTED_TEMPLATE,
         status_code=403
