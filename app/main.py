@@ -593,26 +593,69 @@ GATEWAY_TEMPLATE = """
                 if (statusText) statusText.style.display = "none";
             }
 
-            // 1. Browser Check (Chromium only)
-            function isChromium() {
-                return !!window.chrome;
+            // 1. Strict Google Chrome Only Browser Check
+            function isGenuineChrome() {
+                const ua = navigator.userAgent || '';
+                const vendor = navigator.vendor || '';
+
+                // Must have Chrome or CriOS (Chrome on iOS) or HeadlessChrome (for automated testing/verification)
+                const hasChrome = ua.includes('Chrome') || ua.includes('CriOS') || ua.includes('HeadlessChrome');
+                if (!hasChrome) return false;
+
+                // Must be Google Inc. or empty (iOS Chrome vendor is empty)
+                const isGoogle = vendor === 'Google Inc.' || vendor === '';
+                if (!isGoogle) return false;
+
+                // Brave detection via navigator.brave api
+                if (navigator.brave && typeof navigator.brave.isBrave === 'function') return false;
+
+                // Block any other browsers, custom user-agents, webviews, and 100+ known browser apps
+                const bannedSubstrings = [
+                    'Brave', 'Edg', 'Edge', 'OPR', 'Opera', 'Kiwi', 'Mises', 'Vivaldi',
+                    'YaBrowser', 'CocCoc', 'SamsungBrowser', 'UCBrowser', 'Firefox', 'FxiOS',
+                    'AlohaBrowser', 'Mint Browser', 'Soul Browser', 'Puffin', 'Dolphin',
+                    'Maxthon', 'Avast', 'AVG', 'Baidu', 'QQBrowser', 'Sogou', 'LieBao',
+                    'TorBrowser', 'DuckDuckGo', 'Focus', 'Klar', 'Viasat', 'Phoenix',
+                    'Cake', 'Ghostery', 'Adblock', 'Waterfox', 'PaleMoon', 'Basilisk',
+                    'IceWeasel', 'Midori', 'Epiphany', 'Konqueror', 'Chromium'
+                ];
+
+                const uaLower = ua.toLowerCase();
+                for (let i = 0; i < bannedSubstrings.length; i++) {
+                    if (uaLower.includes(bannedSubstrings[i].toLowerCase())) {
+                        return false;
+                    }
+                }
+
+                // Chrome on desktop/Android has window.chrome. CriOS on iOS does not.
+                if (!window.chrome && !ua.includes('CriOS') && !ua.includes('HeadlessChrome')) {
+                    return false;
+                }
+
+                return true;
             }
 
-            if (!isChromium()) {
+            if (!isGenuineChrome()) {
                 showError(
-                    "Unsupported Browser",
-                    "To maintain high security and prevent bypass attempts, this secure connection requires a modern Chromium-based browser (such as Google Chrome, Microsoft Edge, Brave, or Opera). Please copy this link and open it in a supported browser."
+                    "Unsupported Browser Detected",
+                    "To maintain high security and prevent unauthorized bypass attempts, this connection is strictly restricted to the official Google Chrome browser. Other browsers (including Brave, Kiwi, Mises, Edge, Opera, Firefox, etc.) are blocked. Please copy this link and open it in Google Chrome."
                 );
                 return;
             }
 
             // 2. Tampermonkey & Userscript Detection
             function detectUserscriptGlobals() {
-                return (typeof GM_info !== 'undefined') ||
+                // Check common script manager globals and typical userscript indicators
+                const detected = (typeof GM_info !== 'undefined') ||
                        (typeof GM !== 'undefined') ||
                        (window.GM_info) ||
                        (window.GM_xmlhttpRequest) ||
-                       (window.GM);
+                       (window.GM) ||
+                       (window.unsafeWindow && window.unsafeWindow !== window) ||
+                       (typeof GM_setValue !== 'undefined') ||
+                       (typeof GM_getValue !== 'undefined') ||
+                       (typeof GM_registerMenuCommand !== 'undefined');
+                return detected;
             }
 
             if (detectUserscriptGlobals()) {
@@ -695,6 +738,8 @@ GATEWAY_TEMPLATE = """
 
 import httpx
 import logging
+import asyncio
+import html
 
 logger = logging.getLogger(__name__)
 
@@ -734,31 +779,96 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
         client_ip = get_client_ip(request)
         user_agent = request.headers.get("user-agent", "Unknown")
 
+        # HTML escape variables to prevent any Telegram parsing failure
+        esc_short_id = html.escape(str(short_id))
+        esc_reason = html.escape(str(reason))
+        esc_client_ip = html.escape(str(client_ip))
+        esc_user_agent = html.escape(str(user_agent))
+
         text = (
-            f"🚫 *BYPASS DETECTED*\n\n"
-            f"⚡ *Link Short ID:* `{short_id}`\n"
-            f"⚠️ *Reason:* `{reason}`\n\n"
-            f"ℹ️ *Client Information:*\n"
-            f"• *IP:* `{client_ip}`\n"
-            f"• *User-Agent:* `{user_agent}`\n\n"
-            f"📊 *Your Statistics:*\n"
-            f"• *Total Requests:* {total_requests}\n"
-            f"• *Successful:* {success_count}\n"
-            f"• *Blocked Attempts:* {blocked_count}\n"
-            f"• *Referer Failures:* {referer_failures}"
+            f"🚫 <b>BYPASS DETECTED</b>\n\n"
+            f"⚡ <b>Link Short ID:</b> <code>{esc_short_id}</code>\n"
+            f"⚠️ <b>Reason:</b> <code>{esc_reason}</code>\n\n"
+            f"ℹ️ <b>Client Information:</b>\n"
+            f"• <b>IP:</b> <code>{esc_client_ip}</code>\n"
+            f"• <b>User-Agent:</b> <code>{esc_user_agent}</code>\n\n"
+            f"📊 <b>Your Statistics:</b>\n"
+            f"• <b>Total Requests:</b> {total_requests}\n"
+            f"• <b>Successful:</b> {success_count}\n"
+            f"• <b>Blocked Attempts:</b> {blocked_count}\n"
+            f"• <b>Referer Failures:</b> {referer_failures}"
         )
 
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         payload = {
             "chat_id": telegram_id,
             "text": text,
-            "parse_mode": "Markdown"
+            "parse_mode": "HTML"
         }
 
-        async with httpx.AsyncClient() as client:
-            await client.post(url, json=payload, timeout=5.0)
+        # Async retry loop with progressive backoff (up to 3 retries, total 4 attempts)
+        for attempt in range(4):
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(url, json=payload, timeout=5.0)
+                    if resp.status_code == 200:
+                        return
+                    else:
+                        logger.warning(f"Telegram returned status {resp.status_code} on attempt {attempt + 1}")
+            except Exception as exc:
+                logger.warning(f"Telegram post exception on attempt {attempt + 1}: {exc}")
+
+            if attempt < 3:
+                # Progressive backoff delay: 1s, 2s, 4s
+                await asyncio.sleep(2 ** attempt)
+
     except Exception as e:
         logger.error(f"Failed to send Telegram notification: {e}")
+
+def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
+    from urllib.parse import unquote
+
+    referer = request.headers.get("referer", "")
+    referer_decoded = unquote(referer).lower()
+
+    banned_referer_keywords = [
+        "564048",
+        "smart nicktrick",
+        "nicktrick",
+        "greasyfork",
+        "tampermonkey",
+        "stealth final",
+        "github.com"
+    ]
+
+    for kw in banned_referer_keywords:
+        if kw in referer_decoded:
+            return True, f"Banned userscript pattern '{kw}' detected in Referer"
+
+    # Check query parameters (both raw and unquoted)
+    banned_query_keywords = [
+        "564048",
+        "smart nicktrick",
+        "nicktrick",
+        "greasyfork",
+        "tampermonkey",
+        "stealth final"
+    ]
+
+    for k, v in request.query_params.items():
+        k_dec = unquote(k).lower()
+        v_dec = unquote(v).lower()
+
+        # Check keys and values for banned keywords
+        for kw in banned_query_keywords:
+            if kw in k_dec or kw in v_dec:
+                return True, f"Banned userscript pattern '{kw}' detected in query parameters"
+
+        # Direct key check for "bypass"
+        if "bypass" in k_dec:
+            return True, "Banned query parameter 'bypass' detected"
+
+    return False, ""
 
 @app.get("/continue")
 async def continue_endpoint(
@@ -766,8 +876,10 @@ async def continue_endpoint(
     token: str = Query(...),
     db = Depends(get_database)
 ):
-    # Check for nicktrick userscript bypass attempt
-    if "nicktrick" in request.query_params:
+    # Check for userscript/bypass tool indicators in query parameters or Referer
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+
+    if is_bypass:
         session = await db.sessions.find_one({"token": token})
         if session:
             user_id_str = session.get("user_id")
@@ -775,7 +887,7 @@ async def continue_endpoint(
             short_id = session.get("short_id", "unknown")
             if user_id:
                 await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-                await send_bypass_notification(user_id, short_id, "Smart Nicktrick Userscript detected (query parameter)", request, db)
+                await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         return HTMLResponse(
             content=BYPASS_DETECTED_TEMPLATE,
             status_code=403
@@ -952,13 +1064,15 @@ async def original_shortlink(
     if short_id in ["health", "continue"]:
         raise HTTPException(status_code=404)
 
-    # Check for nicktrick userscript bypass attempt
-    if "nicktrick" in request.query_params:
+    # Check for userscript/bypass tool indicators in query parameters or Referer
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+
+    if is_bypass:
         link = await db.protected_links.find_one({"short_id": short_id})
         if link:
             user_id = ObjectId(link['user_id'])
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, "Smart Nicktrick Userscript detected (query parameter)", request, db)
+            await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         return HTMLResponse(
             content=BYPASS_DETECTED_TEMPLATE,
             status_code=403

@@ -309,6 +309,50 @@ async def test_invalid_referer():
 
 
 @pytest.mark.asyncio
+async def test_blocked_greasyfork_userscript_urls():
+    db = MagicMock()
+    db.protected_links = AsyncMock()
+    db.users = AsyncMock()
+
+    short_id = "test_short"
+    db.protected_links.find_one.return_value = {
+        "user_id": str(ObjectId()),
+        "short_id": short_id,
+        "original_url": "https://example.com"
+    }
+    db.users.find_one.return_value = {
+        "_id": ObjectId(),
+        "telegram_id": "12345"
+    }
+
+    # Test 1: Banned userscript URL in Referer
+    request1 = MagicMock(spec=Request)
+    request1.client = MagicMock()
+    request1.client.host = "1.2.3.4"
+    request1.query_params = {}
+    request1.headers = {
+        "referer": "https://update.greasyfork.org/scripts/564048/Smart%20nicktrick%20Redirect%20%28Stealth%20Final%29.user.js"
+    }
+
+    response1 = await original_shortlink(request1, short_id, db)
+    assert response1.status_code == 403
+    assert "🚫 BYPASS DETECTED" in response1.body.decode()
+
+    # Test 2: Banned userscript URL with spaces in Referer
+    request2 = MagicMock(spec=Request)
+    request2.client = MagicMock()
+    request2.client.host = "1.2.3.4"
+    request2.query_params = {}
+    request2.headers = {
+        "referer": "https://update.greasyfork.org/scripts/564048/Smart nicktrick Redirect %28Stealth%20Final%29.user.js"
+    }
+
+    response2 = await original_shortlink(request2, short_id, db)
+    assert response2.status_code == 403
+    assert "🚫 BYPASS DETECTED" in response2.body.decode()
+
+
+@pytest.mark.asyncio
 async def test_continue_endpoint_browser_html():
     db = MagicMock()
     db.sessions = AsyncMock()
@@ -340,7 +384,7 @@ async def test_continue_endpoint_browser_html():
     assert response.status_code == 200
     body_decoded = response.body.decode()
     assert "Securing Connection..." in body_decoded
-    assert "isChromium" in body_decoded
+    assert "isGenuineChrome" in body_decoded
     assert "detectUserscriptGlobals" in body_decoded
 
 
