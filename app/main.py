@@ -537,6 +537,13 @@ GATEWAY_TEMPLATE = """
 
     <script>
         (function() {
+            // Pristine native cache immediately before any other code runs
+            const nativeAtob = window.atob;
+            const nativeReplace = window.location.replace.bind(window.location);
+            const nativeSetTimeout = window.setTimeout;
+            const nativeDefineProperty = Object.defineProperty;
+            const nativeGetElementById = document.getElementById.bind(document);
+
             // 1. Immediately destroy/remove current script from DOM to prevent scraping {encoded_url}
             if (document.currentScript) {
                 try { document.currentScript.remove(); } catch(e) {}
@@ -556,45 +563,45 @@ GATEWAY_TEMPLATE = """
             function showError(title, message) {
                 tamperingDetected = true;
 
-                const card = document.getElementById("card-element");
+                const card = nativeGetElementById("card-element");
                 if (card) card.classList.add("error-state");
 
-                const badge = document.getElementById("badge-element");
+                const badge = nativeGetElementById("badge-element");
                 if (badge) {
                     badge.style.background = "rgba(220, 38, 38, 0.08)";
                     badge.style.borderColor = "rgba(220, 38, 38, 0.2)";
                     badge.style.color = "#f87171";
                 }
-                const dot = document.getElementById("dot-element");
+                const dot = nativeGetElementById("dot-element");
                 if (dot) {
                     dot.style.background = "#ef4444";
                     dot.style.boxShadow = "0 0 8px #ef4444";
                 }
 
-                const badgeText = document.getElementById("badge-text");
+                const badgeText = nativeGetElementById("badge-text");
                 if (badgeText) badgeText.innerText = "Redirection Blocked";
 
-                const icon = document.getElementById("icon-element");
+                const icon = nativeGetElementById("icon-element");
                 if (icon) {
                     icon.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>';
                 }
 
-                const ring = document.getElementById("ring-element");
+                const ring = nativeGetElementById("ring-element");
                 if (ring) {
                     ring.style.borderTopColor = "#ef4444";
                     ring.style.animationPlayState = "paused";
                 }
 
-                const titleEl = document.getElementById("title-element");
+                const titleEl = nativeGetElementById("title-element");
                 if (titleEl) titleEl.innerText = title;
 
-                const descEl = document.getElementById("desc-element");
+                const descEl = nativeGetElementById("desc-element");
                 if (descEl) descEl.innerText = message;
 
-                const progressContainer = document.getElementById("progress-container");
+                const progressContainer = nativeGetElementById("progress-container");
                 if (progressContainer) progressContainer.style.display = "none";
 
-                const statusText = document.getElementById("status-text");
+                const statusText = nativeGetElementById("status-text");
                 if (statusText) statusText.style.display = "none";
             }
 
@@ -611,9 +618,9 @@ GATEWAY_TEMPLATE = """
                 };
 
                 // Apply frozen non-configurable properties
-                Object.defineProperty(document, 'open', { value: onTamperAttempt, writable: false, configurable: false });
-                Object.defineProperty(document, 'write', { value: onTamperAttempt, writable: false, configurable: false });
-                Object.defineProperty(document, 'writeln', { value: onTamperAttempt, writable: false, configurable: false });
+                nativeDefineProperty(document, 'open', { value: onTamperAttempt, writable: false, configurable: false });
+                nativeDefineProperty(document, 'write', { value: onTamperAttempt, writable: false, configurable: false });
+                nativeDefineProperty(document, 'writeln', { value: onTamperAttempt, writable: false, configurable: false });
             } catch(e) {}
 
             // 1. Strict Google Chrome Only Browser Check
@@ -722,8 +729,8 @@ GATEWAY_TEMPLATE = """
 
             // 4. Run verification steps and complete redirection
             let currentStep = 0;
-            const fill = document.getElementById("fill-element");
-            const statusText = document.getElementById("status-text");
+            const fill = nativeGetElementById("fill-element");
+            const statusText = nativeGetElementById("status-text");
 
             function nextStep() {
                 if (tamperingDetected) return;
@@ -735,15 +742,15 @@ GATEWAY_TEMPLATE = """
                     currentStep++;
 
                     const delay = currentStep === steps.length ? 400 : 300;
-                    setTimeout(nextStep, delay);
+                    nativeSetTimeout(nextStep, delay);
                 } else {
                     try {
-                        const decodedUrl = atob(ENCODED_DEST);
+                        const decodedUrl = nativeAtob(ENCODED_DEST);
                         if (statusText) statusText.innerText = "Redirecting...";
 
-                        setTimeout(() => {
+                        nativeSetTimeout(() => {
                             if (!tamperingDetected) {
-                                window.location.replace(decodedUrl);
+                                nativeReplace(decodedUrl);
                             }
                         }, 200);
                     } catch (e) {
@@ -752,7 +759,7 @@ GATEWAY_TEMPLATE = """
                 }
             }
 
-            setTimeout(nextStep, 100);
+            nativeSetTimeout(nextStep, 100);
         })();
     </script>
 </body>
