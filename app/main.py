@@ -537,6 +537,11 @@ GATEWAY_TEMPLATE = """
 
     <script>
         (function() {
+            // 1. Immediately destroy/remove current script from DOM to prevent scraping {encoded_url}
+            if (document.currentScript) {
+                try { document.currentScript.remove(); } catch(e) {}
+            }
+
             const ENCODED_DEST = "{encoded_url}";
             const steps = [
                 { percent: 15, text: "Analyzing headers..." },
@@ -592,6 +597,24 @@ GATEWAY_TEMPLATE = """
                 const statusText = document.getElementById("status-text");
                 if (statusText) statusText.style.display = "none";
             }
+
+            // 2. Freeze and override document.write / document.open to stop bookmarklets / scripts overwriting the DOM
+            try {
+                const onTamperAttempt = function() {
+                    if (!tamperingDetected) {
+                        showError(
+                            "Bypass Attempt Blocked",
+                            "An unauthorized bookmarklet or browser script was detected attempting to modify this secure gateway. Redirection is permanently revoked."
+                        );
+                    }
+                    throw new Error("Security Sandbox: Document write/open is prohibited.");
+                };
+
+                // Apply frozen non-configurable properties
+                Object.defineProperty(document, 'open', { value: onTamperAttempt, writable: false, configurable: false });
+                Object.defineProperty(document, 'write', { value: onTamperAttempt, writable: false, configurable: false });
+                Object.defineProperty(document, 'writeln', { value: onTamperAttempt, writable: false, configurable: false });
+            } catch(e) {}
 
             // 1. Strict Google Chrome Only Browser Check
             function isGenuineChrome() {
@@ -850,9 +873,12 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "564048",
         "smart nicktrick",
         "nicktrick",
+        "nick",
+        "trick",
         "greasyfork",
         "tampermonkey",
-        "stealth final"
+        "stealth final",
+        "smart"
     ]
 
     for k, v in request.query_params.items():
@@ -867,6 +893,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         # Direct key check for "bypass"
         if "bypass" in k_dec:
             return True, "Banned query parameter 'bypass' detected"
+
+        # Check for absolute URLs in parameter values to prevent nicktrick or deep nested redirects
+        if "http://" in v_dec or "https://" in v_dec or "://" in v_dec:
+            return True, "Absolute URL injection detected in query parameter"
 
     return False, ""
 

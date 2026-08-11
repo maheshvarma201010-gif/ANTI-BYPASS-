@@ -309,6 +309,34 @@ async def test_invalid_referer():
 
 
 @pytest.mark.asyncio
+async def test_absolute_url_query_parameter_injection_blocked():
+    db = MagicMock()
+    db.protected_links = AsyncMock()
+    db.users = AsyncMock()
+
+    short_id = "test_short"
+    db.protected_links.find_one.return_value = {
+        "user_id": str(ObjectId()),
+        "short_id": short_id,
+        "original_url": "https://example.com"
+    }
+    db.users.find_one.return_value = {
+        "_id": ObjectId(),
+        "telegram_id": "12345"
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    # Query parameters contain an absolute URL
+    request.query_params = {"any_key": "https://target-payload.com"}
+
+    response = await original_shortlink(request, short_id, db)
+    assert response.status_code == 403
+    assert "🚫 BYPASS DETECTED" in response.body.decode()
+
+
+@pytest.mark.asyncio
 async def test_blocked_greasyfork_userscript_urls():
     db = MagicMock()
     db.protected_links = AsyncMock()
