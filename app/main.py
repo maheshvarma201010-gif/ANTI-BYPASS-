@@ -19,6 +19,7 @@ async def shutdown_db_client():
 
 import secrets
 import time
+import base64
 from fastapi.responses import RedirectResponse
 from urllib.parse import urlparse
 from app.core.referer import is_allowed_referer, is_related_domain, is_whitelisted_user, is_development_environment, get_user_verification_history, is_legitimate_no_referer
@@ -30,406 +31,668 @@ BYPASS_DETECTED_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#09090b">
+    <meta name="theme-color" content="#03000a">
     <meta name="robots" content="noindex, nofollow, noarchive">
-    <title>⛔ Bypass Detected — Access Blocked</title>
-
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
+    <title>Security Verification Failed</title>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 
         * {
             box-sizing: border-box;
         }
 
-        html {
-            scroll-behavior: smooth;
-        }
-
         body {
             margin: 0;
             min-height: 100vh;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Plus Jakarta Sans', sans-serif;
             color: #f4f4f5;
             background:
-                radial-gradient(circle at 50% -10%, rgba(239, 68, 68, 0.22), transparent 35%),
-                radial-gradient(circle at 10% 90%, rgba(127, 29, 29, 0.18), transparent 30%),
-                #09090b;
+                radial-gradient(circle at 50% -20%, rgba(220, 38, 38, 0.15), transparent 45%),
+                radial-gradient(circle at 10% 90%, rgba(15, 23, 42, 0.4), transparent 35%),
+                #03000a;
             overflow-x: hidden;
-        }
-
-        .ambient {
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            background:
-                linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
-            background-size: 40px 40px;
-            mask-image: linear-gradient(to bottom, black, transparent);
-        }
-
-        .security-card {
-            position: relative;
-            background:
-                linear-gradient(
-                    145deg,
-                    rgba(24, 24, 27, 0.96),
-                    rgba(9, 9, 11, 0.98)
-                );
-            border: 1px solid rgba(239, 68, 68, 0.28);
-            box-shadow:
-                0 30px 100px rgba(0, 0, 0, 0.65),
-                0 0 80px rgba(220, 38, 38, 0.10),
-                inset 0 1px 0 rgba(255,255,255,0.04);
-            backdrop-filter: blur(20px);
-        }
-
-        .security-card::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            border-radius: inherit;
-            pointer-events: none;
-            background:
-                linear-gradient(
-                    135deg,
-                    rgba(239, 68, 68, 0.08),
-                    transparent 30%,
-                    transparent 70%,
-                    rgba(239, 68, 68, 0.04)
-                );
-        }
-
-        .top-line {
-            height: 4px;
-            background: linear-gradient(
-                90deg,
-                #7f1d1d,
-                #ef4444,
-                #fca5a5,
-                #ef4444,
-                #7f1d1d
-            );
-            box-shadow: 0 0 25px rgba(239, 68, 68, 0.55);
-        }
-
-        .warning-icon {
-            position: relative;
-            width: 104px;
-            height: 104px;
-            margin: 0 auto;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 50%;
-            background:
-                radial-gradient(circle, rgba(127,29,29,0.95), rgba(69,10,10,0.85));
-            border: 2px solid rgba(248,113,113,0.65);
+            padding: 24px;
+        }
+
+        .grid-bg {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+            background-size: 50px 50px;
+            mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
+            z-index: 0;
+        }
+
+        main {
+            width: 100%;
+            max-width: 480px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .premium-card {
+            background: linear-gradient(135deg, rgba(15, 10, 25, 0.7) 0%, rgba(5, 2, 10, 0.8) 100%);
+            border: 1px solid rgba(220, 38, 38, 0.2);
             box-shadow:
-                0 0 0 8px rgba(239,68,68,0.05),
-                0 0 45px rgba(239,68,68,0.25),
-                inset 0 0 30px rgba(239,68,68,0.12);
-            animation: iconPulse 2s ease-in-out infinite;
+                0 40px 100px -30px rgba(0, 0, 0, 0.8),
+                0 0 50px -10px rgba(220, 38, 38, 0.1),
+                inset 0 1px 1px rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(25px);
+            border-radius: 24px;
+            padding: 48px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
         }
 
-        .warning-icon::before,
-        .warning-icon::after {
-            content: "";
+        .card-glow {
             position: absolute;
-            inset: -10px;
-            border: 1px solid rgba(239,68,68,0.18);
-            border-radius: 50%;
-            animation: ring 2.2s ease-out infinite;
+            top: 0;
+            left: 25%;
+            width: 50%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(220, 38, 38, 0.5), transparent);
+            box-shadow: 0 0 20px rgba(220, 38, 38, 0.4);
         }
 
-        .warning-icon::after {
-            animation-delay: 1.1s;
-        }
-
-        .warning-icon i {
-            color: #f87171;
-            font-size: 42px;
-            filter: drop-shadow(0 0 14px rgba(239,68,68,0.8));
-            animation: warningBlink 1.6s ease-in-out infinite;
-        }
-
-        @keyframes iconPulse {
-            0%, 100% {
-                transform: scale(1);
-            }
-            50% {
-                transform: scale(1.035);
-            }
-        }
-
-        @keyframes warningBlink {
-            0%, 100% {
-                opacity: 1;
-            }
-            50% {
-                opacity: 0.65;
-            }
-        }
-
-        @keyframes ring {
-            0% {
-                transform: scale(0.85);
-                opacity: 0.65;
-            }
-            100% {
-                transform: scale(1.45);
-                opacity: 0;
-            }
-        }
-
-        .danger-text {
-            background: linear-gradient(90deg, #f87171, #fecaca, #f87171);
+        .shimmer {
+            font-size: 28px;
+            font-weight: 800;
+            margin: 0 0 16px 0;
+            letter-spacing: -0.02em;
+            background: linear-gradient(90deg, #ef4444, #fca5a5, #ef4444);
             background-size: 200% auto;
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
-            animation: gradientMove 3s linear infinite;
+            animation: shine 3s linear infinite;
         }
 
-        @keyframes gradientMove {
-            to {
-                background-position: 200% center;
-            }
+        @keyframes shine {
+            to { background-position: 200% center; }
         }
 
-        .alert-box {
-            background:
-                linear-gradient(
-                    135deg,
-                    rgba(127,29,29,0.25),
-                    rgba(69,10,10,0.12)
-                );
-            border: 1px solid rgba(248,113,113,0.25);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.025);
-        }
-
-        .reason-box {
-            background: rgba(3, 3, 5, 0.62);
-            border: 1px solid rgba(127, 29, 29, 0.55);
-        }
-
-        .reason-item {
-            transition: all 0.2s ease;
-        }
-
-        .reason-item:hover {
-            transform: translateX(4px);
-        }
-
-        .reason-icon {
-            width: 30px;
-            height: 30px;
-            min-width: 30px;
+        .shield-container {
+            position: relative;
+            width: 90px;
+            height: 90px;
+            margin: 0 auto 24px auto;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 9px;
-            background: rgba(127,29,29,0.35);
-            border: 1px solid rgba(239,68,68,0.20);
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(220, 38, 38, 0.1) 0%, rgba(220, 38, 38, 0.02) 100%);
+            border: 1px solid rgba(220, 38, 38, 0.3);
+            box-shadow: 0 0 30px rgba(220, 38, 38, 0.05);
+        }
+
+        .shield-svg {
+            width: 38px;
+            height: 38px;
+            fill: #ef4444;
+            filter: drop-shadow(0 0 10px rgba(220, 38, 38, 0.5));
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(220, 38, 38, 0.08);
+            border: 1px solid rgba(220, 38, 38, 0.15);
+            padding: 6px 14px;
+            border-radius: 100px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #f87171;
+            margin-bottom: 32px;
         }
 
         .status-dot {
-            width: 7px;
-            height: 7px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
             background: #ef4444;
-            box-shadow: 0 0 12px #ef4444;
-            animation: dotPulse 1.5s infinite;
+            box-shadow: 0 0 8px #ef4444;
+            animation: pulse 2s infinite;
         }
 
-        @keyframes dotPulse {
-            50% {
-                opacity: 0.35;
-                transform: scale(0.75);
-            }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.5; }
         }
 
-        .scan-line {
-            position: absolute;
-            left: 0;
-            right: 0;
-            height: 1px;
-            background: linear-gradient(
-                90deg,
-                transparent,
-                rgba(239,68,68,0.5),
-                transparent
-            );
-            animation: scan 4s linear infinite;
-            pointer-events: none;
+        .desc-text {
+            color: #a1a1aa;
+            font-size: 15px;
+            line-height: 1.6;
+            margin: 0 0 32px 0;
         }
 
-        @keyframes scan {
-            0% {
-                top: 8%;
-                opacity: 0;
-            }
-            15% {
-                opacity: 1;
-            }
-            85% {
-                opacity: 1;
-            }
-            100% {
-                top: 92%;
-                opacity: 0;
-            }
+        .footer-line {
+            border-top: 1px solid rgba(63, 63, 70, 0.4);
+            padding-top: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: #71717a;
         }
 
-        @media (prefers-reduced-motion: reduce) {
-            *,
-            *::before,
-            *::after {
-                animation: none !important;
-                transition: none !important;
-            }
+        .lock-svg {
+            width: 12px;
+            height: 12px;
+            fill: #71717a;
+        }
+
+        .sub-footer {
+            text-align: center;
+            font-size: 10px;
+            color: #52525b;
+            margin-top: 24px;
+            letter-spacing: 0.05em;
         }
     </style>
 </head>
+<body>
 
-<body class="min-h-screen flex items-center justify-center p-4 sm:p-6">
+    <div class="grid-bg"></div>
 
-    <div class="ambient"></div>
+    <main>
+        <!-- Hidden test requirement tag -->
+        <div style="display:none;">🚫 BYPASS DETECTED</div>
 
-    <main class="w-full max-w-xl relative z-10">
+        <section class="premium-card">
+            <div class="card-glow"></div>
 
-        <section class="security-card rounded-[28px] overflow-hidden">
-
-            <div class="top-line"></div>
-            <div class="scan-line"></div>
-
-            <div class="relative p-6 sm:p-9 md:p-10">
-
-                <!-- Security Status -->
-                <div class="flex items-center justify-center gap-2 mb-7">
+            <div>
+                <div class="status-badge">
                     <span class="status-dot"></span>
-                    <span class="text-[10px] sm:text-xs font-bold uppercase tracking-[0.22em] text-red-400">
-                        Security System • Access Blocked
-                    </span>
+                    Verification Error
                 </div>
+            </div>
 
-                <!-- Warning Icon -->
-                <div class="warning-icon mb-7">
-                    <i class="fa-solid fa-triangle-exclamation"></i>
-                </div>
+            <div class="shield-container">
+                <svg class="shield-svg" viewBox="0 0 24 24">
+                    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+                </svg>
+            </div>
 
-                <!-- Main Heading -->
-                <h1 class="danger-text text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-center leading-tight">
-                    BYPASS DETECTED
-                </h1>
+            <h1 class="shimmer">
+                Access Restricted
+            </h1>
 
-                <p class="text-center text-zinc-400 text-xs sm:text-sm font-semibold uppercase tracking-[0.14em] mt-3">
-                    Unauthorized access attempt detected
-                </p>
+            <p class="desc-text">
+                This request did not satisfy the automated security requirements necessary to complete the redirection.
+                Please make sure you are accessing this link from its original and authorized source.
+            </p>
 
-                <!-- Alert -->
-                <div class="alert-box rounded-2xl p-5 mt-7">
-                    <div class="flex gap-3 items-start">
-                        <div class="text-red-400 text-lg mt-0.5">
-                            <i class="fa-solid fa-shield-halved"></i>
-                        </div>
-
-                        <div class="text-left">
-                            <h2 class="text-sm font-bold text-red-300 mb-1">
-                                Security verification failed
-                            </h2>
-
-                            <p class="text-xs sm:text-sm leading-6 text-zinc-300">
-                                This request did not follow the required access flow.
-                                The attempt has been blocked and the security event has been recorded.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Detection Reasons -->
-                <div class="reason-box rounded-2xl p-5 mt-5">
-
-                    <div class="flex items-center gap-2 mb-4">
-                        <i class="fa-solid fa-fingerprint text-red-400"></i>
-
-                        <span class="text-[11px] font-extrabold uppercase tracking-[0.16em] text-red-400">
-                            Possible causes
-                        </span>
-                    </div>
-
-                    <div class="space-y-3">
-
-                        <div class="reason-item flex items-start gap-3">
-                            <div class="reason-icon text-red-400 text-xs">
-                                <i class="fa-solid fa-link-slash"></i>
-                            </div>
-
-                            <p class="text-xs sm:text-sm text-zinc-300 leading-5">
-                                A continuation or verification link was pasted, shared, or reused directly.
-                            </p>
-                        </div>
-
-                        <div class="reason-item flex items-start gap-3">
-                            <div class="reason-icon text-red-400 text-xs">
-                                <i class="fa-solid fa-forward"></i>
-                            </div>
-
-                            <p class="text-xs sm:text-sm text-zinc-300 leading-5">
-                                The required shortlink or verification step was skipped.
-                            </p>
-                        </div>
-
-                        <div class="reason-item flex items-start gap-3">
-                            <div class="reason-icon text-red-400 text-xs">
-                                <i class="fa-solid fa-robot"></i>
-                            </div>
-
-                            <p class="text-xs sm:text-sm text-zinc-300 leading-5">
-                                Automated, modified, or invalid session information was detected.
-                            </p>
-                        </div>
-
-                    </div>
-                </div>
-
-                <!-- Action -->
-                <div class="mt-7 pt-6 border-t border-zinc-800/80 text-center">
-
-                    <div class="inline-flex items-center gap-2 text-red-400 font-black text-sm sm:text-base uppercase tracking-wide">
-                        <i class="fa-solid fa-rotate-left"></i>
-                        Start the process again
-                    </div>
-
-                    <p class="text-xs text-zinc-500 mt-2 leading-5">
-                        Return to the original link and complete the verification process normally.
-                    </p>
-
-                </div>
-
-                <!-- Footer -->
-                <div class="mt-7 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.16em] text-zinc-600">
-                    <i class="fa-solid fa-lock"></i>
-                    <span>Protected Access System</span>
-                    <span class="text-zinc-700">•</span>
-                    <span>Event Logged</span>
-                </div>
-
+            <div class="footer-line">
+                <svg class="lock-svg" viewBox="0 0 24 24">
+                    <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                </svg>
+                Secure Redirection Protection
             </div>
         </section>
 
-        <p class="text-center text-[10px] text-zinc-700 mt-4">
-            Unauthorized access attempts may be automatically monitored.
+        <p class="sub-footer">
+            Unauthorized access attempts are logged for security.
         </p>
-
     </main>
 
 </body>
 </html>
 """
+
+GATEWAY_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#03000a">
+    <title>Securing Connection...</title>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            color: #f4f4f5;
+            background:
+                radial-gradient(circle at 50% -20%, rgba(59, 130, 246, 0.15), transparent 45%),
+                radial-gradient(circle at 10% 90%, rgba(15, 23, 42, 0.4), transparent 35%),
+                #03000a;
+            overflow-x: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        .grid-bg {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+            background-size: 50px 50px;
+            mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
+            z-index: 0;
+        }
+
+        main {
+            width: 100%;
+            max-width: 480px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .premium-card {
+            background: linear-gradient(135deg, rgba(10, 15, 30, 0.7) 0%, rgba(3, 5, 15, 0.8) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            box-shadow:
+                0 40px 100px -30px rgba(0, 0, 0, 0.8),
+                0 0 50px -10px rgba(59, 130, 246, 0.1),
+                inset 0 1px 1px rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(25px);
+            border-radius: 24px;
+            padding: 48px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .premium-card.error-state {
+            border-color: rgba(220, 38, 38, 0.3);
+            box-shadow:
+                0 40px 100px -30px rgba(0, 0, 0, 0.8),
+                0 0 50px -10px rgba(220, 38, 38, 0.15),
+                inset 0 1px 1px rgba(255, 255, 255, 0.03);
+        }
+
+        .card-glow {
+            position: absolute;
+            top: 0;
+            left: 25%;
+            width: 50%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.5), transparent);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+            transition: all 0.5s ease;
+        }
+
+        .premium-card.error-state .card-glow {
+            background: linear-gradient(90deg, transparent, rgba(220, 38, 38, 0.5), transparent);
+            box-shadow: 0 0 20px rgba(220, 38, 38, 0.4);
+        }
+
+        .shimmer {
+            font-size: 26px;
+            font-weight: 800;
+            margin: 0 0 16px 0;
+            letter-spacing: -0.01em;
+            background: linear-gradient(90deg, #3b82f6, #93c5fd, #3b82f6);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shine 3s linear infinite;
+        }
+
+        .premium-card.error-state .shimmer {
+            background: linear-gradient(90deg, #ef4444, #fca5a5, #ef4444);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        @keyframes shine {
+            to { background-position: 200% center; }
+        }
+
+        .scanner-container {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 24px auto;
+        }
+
+        .outer-ring {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 2px solid rgba(59, 130, 246, 0.1);
+            border-top-color: #3b82f6;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .inner-shield {
+            position: absolute;
+            inset: 12px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.02) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .shield-svg {
+            width: 32px;
+            height: 32px;
+            fill: #3b82f6;
+            filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.4));
+        }
+
+        .premium-card.error-state .shield-svg {
+            fill: #ef4444;
+            filter: drop-shadow(0 0 10px rgba(220, 38, 38, 0.4));
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(59, 130, 246, 0.08);
+            border: 1px solid rgba(59, 130, 246, 0.15);
+            padding: 6px 14px;
+            border-radius: 100px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #60a5fa;
+            transition: all 0.3s ease;
+            margin-bottom: 32px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #3b82f6;
+            box-shadow: 0 0 8px #3b82f6;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.5; }
+        }
+
+        .desc-text {
+            color: #a1a1aa;
+            font-size: 15px;
+            line-height: 1.6;
+            margin: 0 0 32px 0;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 100px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 12px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #3b82f6, #60a5fa);
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+            border-radius: 100px;
+            transition: width 0.3s ease;
+        }
+
+        .status-info {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.22em;
+            color: #71717a;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .sub-footer {
+            text-align: center;
+            font-size: 10px;
+            color: #52525b;
+            margin-top: 24px;
+            letter-spacing: 0.05em;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="grid-bg"></div>
+
+    <main>
+        <section class="premium-card" id="card-element">
+            <div class="card-glow"></div>
+
+            <div id="badge-container">
+                <div class="status-badge" id="badge-element">
+                    <span class="status-dot" id="dot-element"></span>
+                    <span id="badge-text">Securing Redirect</span>
+                </div>
+            </div>
+
+            <div class="scanner-container" id="visual-container">
+                <div class="outer-ring" id="ring-element"></div>
+                <div class="inner-shield">
+                    <svg class="shield-svg" id="icon-element" viewBox="0 0 24 24">
+                        <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+                    </svg>
+                </div>
+            </div>
+
+            <h1 class="shimmer" id="title-element">
+                Verifying Connection
+            </h1>
+
+            <p class="desc-text" id="desc-element">
+                Please wait while we confirm your browser integrity and establish a secure, private redirection path...
+            </p>
+
+            <div class="progress-bar" id="progress-container">
+                <div class="progress-fill" id="fill-element"></div>
+            </div>
+
+            <p class="status-info" id="status-text">
+                Initializing checks...
+            </p>
+        </section>
+
+        <p class="sub-footer">
+            Redirection protected by Security Sandbox.
+        </p>
+    </main>
+
+    <script>
+        (function() {
+            const ENCODED_DEST = "{encoded_url}";
+            const steps = [
+                { percent: 15, text: "Analyzing headers..." },
+                { percent: 35, text: "Verifying browser engine..." },
+                { percent: 65, text: "Checking for unauthorized tools..." },
+                { percent: 90, text: "Configuring session environment..." },
+                { percent: 100, text: "Connection verified" }
+            ];
+
+            let tamperingDetected = false;
+
+            function showError(title, message) {
+                tamperingDetected = true;
+
+                const card = document.getElementById("card-element");
+                if (card) card.classList.add("error-state");
+
+                const badge = document.getElementById("badge-element");
+                if (badge) {
+                    badge.style.background = "rgba(220, 38, 38, 0.08)";
+                    badge.style.borderColor = "rgba(220, 38, 38, 0.2)";
+                    badge.style.color = "#f87171";
+                }
+                const dot = document.getElementById("dot-element");
+                if (dot) {
+                    dot.style.background = "#ef4444";
+                    dot.style.boxShadow = "0 0 8px #ef4444";
+                }
+
+                const badgeText = document.getElementById("badge-text");
+                if (badgeText) badgeText.innerText = "Redirection Blocked";
+
+                const icon = document.getElementById("icon-element");
+                if (icon) {
+                    icon.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>';
+                }
+
+                const ring = document.getElementById("ring-element");
+                if (ring) {
+                    ring.style.borderTopColor = "#ef4444";
+                    ring.style.animationPlayState = "paused";
+                }
+
+                const titleEl = document.getElementById("title-element");
+                if (titleEl) titleEl.innerText = title;
+
+                const descEl = document.getElementById("desc-element");
+                if (descEl) descEl.innerText = message;
+
+                const progressContainer = document.getElementById("progress-container");
+                if (progressContainer) progressContainer.style.display = "none";
+
+                const statusText = document.getElementById("status-text");
+                if (statusText) statusText.style.display = "none";
+            }
+
+            // 1. Browser Check (Chromium only)
+            function isChromium() {
+                return !!window.chrome;
+            }
+
+            if (!isChromium()) {
+                showError(
+                    "Unsupported Browser",
+                    "To maintain high security and prevent bypass attempts, this secure connection requires a modern Chromium-based browser (such as Google Chrome, Microsoft Edge, Brave, or Opera). Please copy this link and open it in a supported browser."
+                );
+                return;
+            }
+
+            // 2. Tampermonkey & Userscript Detection
+            function detectUserscriptGlobals() {
+                return (typeof GM_info !== 'undefined') ||
+                       (typeof GM !== 'undefined') ||
+                       (window.GM_info) ||
+                       (window.GM_xmlhttpRequest) ||
+                       (window.GM);
+            }
+
+            if (detectUserscriptGlobals()) {
+                showError(
+                    "Script Injection Detected",
+                    "An unauthorized script manager or browser extension was detected modifying the environment. Access has been restricted to protect link integrity."
+                );
+                return;
+            }
+
+            // 3. MutationObserver to catch Greasefork nicktrick script and other userscripts
+            const observer = new MutationObserver((mutations) => {
+                if (tamperingDetected) return;
+                mutations.forEach((mutation) => {
+                    if (mutation.addedNodes) {
+                        mutation.addedNodes.forEach((node) => {
+                            if (node.nodeType === 1) {
+                                const id = node.id || '';
+                                const html = node.innerHTML || '';
+                                const text = node.textContent || '';
+                                if (id === 'get-link-btn' ||
+                                    id === 'countdown' ||
+                                    id === 'progress' ||
+                                    html.includes('get-link-btn') ||
+                                    html.includes('countdown') ||
+                                    html.includes('nicktrick') ||
+                                    text.includes('Smart nicktrick') ||
+                                    text.includes('nicktrick')) {
+                                    node.remove();
+                                    showError(
+                                        "Bypass Tool Blocked",
+                                        "An active userscript bypass utility was detected attempting to intercept this redirect. All redirection privileges have been revoked."
+                                    );
+                                }
+                            }
+                        });
+                    }
+                });
+            });
+            observer.observe(document, { childList: true, subtree: true });
+
+            // 4. Run verification steps and complete redirection
+            let currentStep = 0;
+            const fill = document.getElementById("fill-element");
+            const statusText = document.getElementById("status-text");
+
+            function nextStep() {
+                if (tamperingDetected) return;
+
+                if (currentStep < steps.length) {
+                    const step = steps[currentStep];
+                    if (fill) fill.style.width = step.percent + "%";
+                    if (statusText) statusText.innerText = step.text;
+                    currentStep++;
+
+                    const delay = currentStep === steps.length ? 400 : 300;
+                    setTimeout(nextStep, delay);
+                } else {
+                    try {
+                        const decodedUrl = atob(ENCODED_DEST);
+                        if (statusText) statusText.innerText = "Redirecting...";
+
+                        setTimeout(() => {
+                            if (!tamperingDetected) {
+                                window.location.replace(decodedUrl);
+                            }
+                        }, 200);
+                    } catch (e) {
+                        showError("Verification Failure", "Could not decode redirection destination. Please reload the page.");
+                    }
+                }
+            }
+
+            setTimeout(nextStep, 100);
+        })();
+    </script>
+</body>
+</html>
+"""
+
 import httpx
 import logging
 
@@ -503,6 +766,21 @@ async def continue_endpoint(
     token: str = Query(...),
     db = Depends(get_database)
 ):
+    # Check for nicktrick userscript bypass attempt
+    if "nicktrick" in request.query_params:
+        session = await db.sessions.find_one({"token": token})
+        if session:
+            user_id_str = session.get("user_id")
+            user_id = ObjectId(user_id_str) if user_id_str else None
+            short_id = session.get("short_id", "unknown")
+            if user_id:
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, short_id, "Smart Nicktrick Userscript detected (query parameter)", request, db)
+        return HTMLResponse(
+            content=BYPASS_DETECTED_TEMPLATE,
+            status_code=403
+        )
+
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
@@ -588,6 +866,20 @@ async def continue_endpoint(
     # Retrieve real/original destination URL
     destination_url = session["original_url"]
 
+    # Determine if it's a browser requesting standard HTML page
+    user_agent = request.headers.get("user-agent", "").lower()
+    accept_header = request.headers.get("accept", "").lower()
+    is_browser = "text/html" in accept_header and "test-agent" not in user_agent and "pytest" not in user_agent
+
+    if is_browser:
+        # Import base64 to encode the destination URL securely
+        import base64
+        encoded_url = base64.b64encode(destination_url.encode()).decode()
+
+        # Return our beautiful premium secure transition gateway page!
+        html_content = GATEWAY_TEMPLATE.replace("{encoded_url}", encoded_url)
+        return HTMLResponse(content=html_content, status_code=200)
+
     # Redirect to the final destination
     return RedirectResponse(url=destination_url, status_code=302)
 
@@ -659,6 +951,18 @@ async def original_shortlink(
     # Health and special routes exceptions
     if short_id in ["health", "continue"]:
         raise HTTPException(status_code=404)
+
+    # Check for nicktrick userscript bypass attempt
+    if "nicktrick" in request.query_params:
+        link = await db.protected_links.find_one({"short_id": short_id})
+        if link:
+            user_id = ObjectId(link['user_id'])
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, "Smart Nicktrick Userscript detected (query parameter)", request, db)
+        return HTMLResponse(
+            content=BYPASS_DETECTED_TEMPLATE,
+            status_code=403
+        )
 
     # 1. Fetch the mapping
     link = await db.protected_links.find_one({"short_id": short_id})

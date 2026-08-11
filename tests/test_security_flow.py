@@ -306,3 +306,67 @@ async def test_invalid_referer():
     response = await original_shortlink(request, short_id, db)
     assert response.status_code == 403
     assert "🚫 BYPASS DETECTED" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_continue_endpoint_browser_html():
+    db = MagicMock()
+    db.sessions = AsyncMock()
+    db.users = AsyncMock()
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {
+        "user-agent": "mozilla/5.0 (windows nt 10.0; win64; x64) applewebkit/537.36 (khtml, like gecko) chrome/120.0.0.0 safari/537.36",
+        "referer": "https://my-app.com",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp"
+    }
+    request.cookies = {"session_id": "cookie_id"}
+
+    db.sessions.find_one.return_value = {
+        "_id": ObjectId(),
+        "session_id": "cookie_id",
+        "token": "valid_token",
+        "user_id": str(ObjectId()),
+        "client_ip": "1.2.3.4",
+        "user_agent": "mozilla/5.0 (windows nt 10.0; win64; x64) applewebkit/537.36 (khtml, like gecko) chrome/120.0.0.0 safari/537.36",
+        "created_at": time.time(),
+        "consumed": False,
+        "original_url": "https://destination-url.com"
+    }
+
+    response = await continue_endpoint(request, "valid_token", db)
+    assert response.status_code == 200
+    body_decoded = response.body.decode()
+    assert "Securing Connection..." in body_decoded
+    assert "isChromium" in body_decoded
+    assert "detectUserscriptGlobals" in body_decoded
+
+
+@pytest.mark.asyncio
+async def test_original_shortlink_nicktrick_blocked():
+    db = MagicMock()
+    db.protected_links = AsyncMock()
+    db.users = AsyncMock()
+
+    short_id = "test_short"
+    db.protected_links.find_one.return_value = {
+        "user_id": str(ObjectId()),
+        "short_id": short_id,
+        "original_url": "https://example.com"
+    }
+    db.users.find_one.return_value = {
+        "_id": ObjectId(),
+        "telegram_id": "12345"
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    # Query parameters contain "nicktrick"
+    request.query_params = {"nicktrick": "some_payload"}
+
+    response = await original_shortlink(request, short_id, db)
+    assert response.status_code == 403
+    assert "🚫 BYPASS DETECTED" in response.body.decode()
