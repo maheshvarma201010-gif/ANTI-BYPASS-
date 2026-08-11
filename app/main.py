@@ -273,6 +273,25 @@ async def continue_endpoint(
     # Redirect to the final destination
     return RedirectResponse(url=destination_url, status_code=302)
 
+def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
+    if not ref_netloc or not shortener_domain:
+        return False
+
+    def get_root_name(domain: str) -> str:
+        parts = domain.split('.')
+        common_tlds = {"com", "co", "net", "org", "info", "io", "in", "xyz", "biz", "us", "uk", "cc", "me", "top", "online", "site", "live", "club", "tech", "work"}
+        valid_parts = [p for p in parts if p not in common_tlds and p != "www" and p != "link" and p != "st" and p != "api"]
+        if valid_parts:
+            return valid_parts[0]
+        return parts[0]
+
+    shortener_root = get_root_name(shortener_domain).lower()
+    ref_root = get_root_name(ref_netloc).lower()
+
+    if shortener_root and ref_root and (shortener_root in ref_netloc or ref_root in shortener_domain):
+        return True
+    return False
+
 @app.get("/{short_id}")
 async def original_shortlink(
     request: Request,
@@ -316,7 +335,7 @@ async def original_shortlink(
         referer_reason = "missing_referer_allowed"
     else:
         ref_netloc = urlparse(referer).netloc.lower()
-        if shortener_domain and (shortener_domain in ref_netloc or ref_netloc in shortener_domain):
+        if shortener_domain and (shortener_domain in ref_netloc or ref_netloc in shortener_domain or check_referer_root(ref_netloc, shortener_domain)):
             referer_valid = True
             referer_reason = "shortener_match"
         elif base_netloc and (base_netloc in ref_netloc or ref_netloc in base_netloc):
