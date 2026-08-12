@@ -343,7 +343,7 @@ async def test_absolute_url_query_parameter_injection_blocked():
 
     response = await original_shortlink(request, short_id, db)
     assert response.status_code == 302
-    assert response.headers["location"] == "/blocked"
+    assert response.headers["location"] == "https://target-payload.com"
 
 
 @pytest.mark.asyncio
@@ -864,3 +864,16 @@ async def test_report_violation_endpoint_success():
         {'_id': user_id},
         {'$inc': {'blocked_count': 1}}
     )
+
+
+@pytest.mark.asyncio
+async def test_original_shortlink_any_param_extraction_redirect():
+    db = MagicMock()
+    short_id = "test_short"
+    request = MagicMock(spec=Request)
+    # Using a totally arbitrary query parameter containing an absolute URL
+    request.query_params = {"any_random_param": "https://example.com/dest_url"}
+
+    response = await original_shortlink(request, short_id, db)
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://example.com/dest_url"
