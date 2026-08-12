@@ -32,9 +32,14 @@ app = FastAPI(title=settings.PROJECT_NAME)
 
 @app.middleware("http")
 async def handle_any_url_param_middleware(request: Request, call_next):
-    url_val = extract_redirect_url(request)
-    if url_val:
-        return RedirectResponse(url=url_val, status_code=302)
+    path = request.url.path
+    # Only run extraction on backend endpoints, skip for wildcard /{short_id} first routes
+    allowed_backend_routes = ["/continue", "/redirect", "/blocked", "/api", "/st"]
+    is_backend = any(path == route or path.startswith(route + "/") for route in allowed_backend_routes)
+    if is_backend:
+        url_val = extract_redirect_url(request)
+        if url_val:
+            return RedirectResponse(url=url_val, status_code=302)
     return await call_next(request)
 
 
@@ -1403,10 +1408,7 @@ async def original_shortlink(
     short_id: str,
     db = Depends(get_database)
 ):
-    # Extract any parameter containing a valid URL and redirect directly to it
-    url_val = extract_redirect_url(request)
-    if url_val:
-        return RedirectResponse(url=url_val, status_code=302)
+
 
     # Health and special routes exceptions
     if short_id in ["health", "continue"]:
