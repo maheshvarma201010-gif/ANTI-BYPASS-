@@ -867,8 +867,11 @@ async def test_report_violation_endpoint_success():
 
 
 @pytest.mark.asyncio
-async def test_continue_endpoint_any_param_extraction_redirect():
+async def test_continue_endpoint_any_param_extraction_blocked():
     db = MagicMock()
+    db.sessions = AsyncMock()
+    db.sessions.find_one.return_value = None
+    db.users = AsyncMock()
     token = "test_token"
     request = MagicMock(spec=Request)
     # Using a totally arbitrary query parameter containing an absolute URL
@@ -876,4 +879,4 @@ async def test_continue_endpoint_any_param_extraction_redirect():
 
     response = await continue_endpoint(request, token, db)
     assert response.status_code == 302
-    assert response.headers["location"] == "https://example.com/dest_url"
+    assert response.headers["location"] == "/blocked"

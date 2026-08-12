@@ -7,40 +7,8 @@ from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
 
 
-def extract_redirect_url(request: Request) -> Optional[str]:
-    from urllib.parse import unquote
-    for key, value in request.query_params.items():
-        if not value:
-            continue
-        url_val = unquote(value).strip()
-        prev_val = ""
-        while url_val != prev_val:
-            prev_val = url_val
-            try:
-                url_val = unquote(url_val).strip()
-            except Exception:
-                break
-        if url_val.startswith("http://") or url_val.startswith("https://"):
-            # Exclude our own system URLs from being self-redirected recursively if they are just system queries
-            if "/continue" in url_val or "/redirect" in url_val:
-                continue
-            return url_val
-    return None
-
 
 app = FastAPI(title=settings.PROJECT_NAME)
-
-@app.middleware("http")
-async def handle_any_url_param_middleware(request: Request, call_next):
-    path = request.url.path
-    # Only run extraction on backend endpoints, skip for wildcard /{short_id} first routes
-    allowed_backend_routes = ["/continue", "/redirect", "/blocked", "/api", "/st"]
-    is_backend = any(path == route or path.startswith(route + "/") for route in allowed_backend_routes)
-    if is_backend:
-        url_val = extract_redirect_url(request)
-        if url_val:
-            return RedirectResponse(url=url_val, status_code=302)
-    return await call_next(request)
 
 
 app.include_router(api_router)
@@ -1041,10 +1009,7 @@ async def continue_endpoint(
     token: str = Query(...),
     db = Depends(get_database)
 ):
-    # Extract any parameter containing a valid URL and redirect directly to it
-    url_val = extract_redirect_url(request)
-    if url_val:
-        return RedirectResponse(url=url_val, status_code=302)
+
 
     # Check for userscript/bypass tool indicators in query parameters or Referer
     is_bypass, bypass_reason = detect_userscript_bypass(request)
