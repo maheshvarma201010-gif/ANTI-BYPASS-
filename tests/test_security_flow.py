@@ -811,3 +811,56 @@ async def test_redirect_endpoint_session_mismatch_blocked():
     response = await redirect_endpoint(request, redirect_id, db)
     assert response.status_code == 302
     assert response.headers['location'] == '/blocked'
+
+
+@pytest.mark.asyncio
+async def test_report_violation_endpoint_success():
+    from app.main import report_violation_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+    db.sessions = AsyncMock()
+    db.users = AsyncMock()
+
+    redirect_id = 'test_redir_id'
+    user_id = ObjectId()
+    session_id = 'session_id_123'
+
+    db.redirects.find_one.return_value = {
+        '_id': ObjectId(),
+        'redirect_id': redirect_id,
+        'target_url': 'https://example.com',
+        'created_at': time.time(),
+        'consumed': False,
+        'session_id': session_id,
+        'user_id': str(user_id),
+        'short_id': 'test_short'
+    }
+
+    db.sessions.find_one.return_value = {
+        '_id': ObjectId(),
+        'session_id': session_id,
+        'consumed': False,
+        'user_id': str(user_id),
+        'short_id': 'test_short'
+    }
+
+    db.users.find_one.return_value = {
+        '_id': user_id,
+        'telegram_id': '12345'
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = '1.2.3.4'
+    request.headers = {}
+
+    body = {'id': redirect_id, 'reason': 'Tab switching detected'}
+    response = await report_violation_endpoint(request, body, db)
+    assert response['status'] == 'success'
+
+    db.redirects.update_one.assert_called()
+    db.sessions.update_one.assert_called()
+    db.users.update_one.assert_called_with(
+        {'_id': user_id},
+        {'$inc': {'blocked_count': 1}}
+    )

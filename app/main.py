@@ -639,6 +639,16 @@ GATEWAY_TEMPLATE = """
                 if (statusText) statusText.style.display = "none";
             }
 
+            function reportViolation(reason) {
+                try {
+                    fetch("/report-violation", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ id: REDIRECT_ID, reason: reason })
+                    });
+                } catch(e) {}
+            }
+
             // 2. Freeze and override document.write / document.open to stop bookmarklets / scripts overwriting the DOM
             try {
                 const onTamperAttempt = function() {
@@ -663,6 +673,7 @@ GATEWAY_TEMPLATE = """
                 if (!sessionStorage.getItem(storageKey)) {
                     sessionStorage.setItem(storageKey, TAB_TOKEN);
                 } else if (sessionStorage.getItem(storageKey) !== TAB_TOKEN) {
+                    reportViolation("Tab context token mismatch in sessionStorage");
                     showError(
                         "Tab Security Violation",
                         "Security violation: Redirection can only be completed in the exact same browser tab where the session started."
@@ -675,6 +686,7 @@ GATEWAY_TEMPLATE = """
             try {
                 const handleBlurOrHide = function() {
                     if (!tamperingDetected) {
+                        reportViolation("Tab/Window switching detected");
                         showError(
                             "Bypass Attempt Blocked",
                             "Security violation: Tab or window switching detected. This verification must be completed in the exact same tab and browser window without interruption."
@@ -1097,7 +1109,9 @@ async def continue_endpoint(
             "salt": salt,
             "user_agent": request.headers.get("user-agent", ""),
             "session_id": cookie_session_id or session.get("session_id"),
-            "tab_token": tab_token
+            "tab_token": tab_token,
+            "user_id": user_id_str,
+            "short_id": short_id
         })
 
         # Return our beautiful premium secure transition gateway page!
@@ -1161,6 +1175,65 @@ async def redirect_endpoint(
 
     # Secure server-side HTTP 302 redirect
     return RedirectResponse(url=redirect_doc["target_url"], status_code=302)
+
+
+@app.post("/report-violation")
+async def report_violation_endpoint(
+    request: Request,
+    body: dict = Body(...),
+    db = Depends(get_database)
+):
+    redirect_id = body.get("id")
+    reason = body.get("reason", "Unknown security violation")
+    if not redirect_id:
+        raise HTTPException(status_code=400, detail="Missing redirect ID")
+
+    # 1. Retrieve the redirect mapping
+    redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
+    if not redirect_doc:
+        return {"status": "error", "message": "Redirect not found"}
+
+    # 2. Instantly consume and expire the redirect mapping to prevent any future use
+    await db.redirects.update_one(
+        {"_id": redirect_doc["_id"]},
+        {"$set": {"consumed": True}}
+    )
+
+    # 3. Find and instantly invalidate/consume any associated session to block the user
+    user_id_str = redirect_doc.get("user_id")
+    short_id = redirect_doc.get("short_id", "unknown")
+    session_id = redirect_doc.get("session_id")
+
+    if session_id:
+        session_doc = await db.sessions.find_one({"session_id": session_id})
+        if session_doc:
+            await db.sessions.update_one(
+                {"_id": session_doc["_id"]},
+                {"$set": {"consumed": True}}
+            )
+            if not user_id_str:
+                user_id_str = session_doc.get("user_id")
+            if short_id == "unknown":
+                short_id = session_doc.get("short_id", "unknown")
+
+    # 4. Increment the user's blocked count and send the Telegram bot alert instantly
+    if user_id_str:
+        user_id = ObjectId(user_id_str)
+        await db.users.update_one(
+            {"_id": user_id},
+            {"$inc": {"blocked_count": 1}}
+        )
+
+        # Async send instant Telegram notification
+        await send_bypass_notification(
+            user_id,
+            short_id,
+            f"Instant Client Violation: {reason}",
+            request,
+            db
+        )
+
+    return {"status": "success"}
 
 
 @app.post("/redirect")
