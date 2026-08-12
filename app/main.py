@@ -582,7 +582,7 @@ GATEWAY_TEMPLATE = """
                 }
             } catch(e) {}
 
-            const ENCODED_DEST = "{encoded_url}";
+            const REDIRECT_ID = "{redirect_id}";
             const steps = [
                 { percent: 15, text: "Analyzing headers..." },
                 { percent: 35, text: "Verifying browser engine..." },
@@ -778,16 +778,15 @@ GATEWAY_TEMPLATE = """
                     nativeSetTimeout(nextStep, delay);
                 } else {
                     try {
-                        const decodedUrl = nativeAtob(ENCODED_DEST);
                         if (statusText) statusText.innerText = "Redirecting...";
 
                         nativeSetTimeout(() => {
                             if (!tamperingDetected) {
-                                nativeReplace(decodedUrl);
+                                nativeReplace("/redirect?id=" + REDIRECT_ID);
                             }
                         }, 200);
                     } catch (e) {
-                        showError("Verification Failure", "Could not decode redirection destination. Please reload the page.");
+                        showError("Verification Failure", "Redirection failed. Please reload the page.");
                     }
                 }
             }
@@ -1043,16 +1042,86 @@ async def continue_endpoint(
     is_browser = "text/html" in accept_header and "test-agent" not in user_agent and "pytest" not in user_agent
 
     if is_browser:
-        # Import base64 to encode the destination URL securely
-        import base64
-        encoded_url = base64.b64encode(destination_url.encode()).decode()
+        redirect_id = secrets.token_urlsafe(8)
+        # Store redirect mapping in redirects collection with 120s TTL
+        await db.redirects.insert_one({
+            "redirect_id": redirect_id,
+            "target_url": destination_url,
+            "created_at": time.time(),
+            "consumed": False,
+            "client_ip": client_ip,
+            "user_agent": request.headers.get("user-agent", "")
+        })
 
         # Return our beautiful premium secure transition gateway page!
-        html_content = GATEWAY_TEMPLATE.replace("{encoded_url}", encoded_url)
+        html_content = GATEWAY_TEMPLATE.replace("{redirect_id}", redirect_id)
         return HTMLResponse(content=html_content, status_code=200)
 
     # Redirect to the final destination
     return RedirectResponse(url=destination_url, status_code=302)
+
+
+@app.get("/redirect")
+async def redirect_endpoint(
+    request: Request,
+    id: str = Query(...),
+    db = Depends(get_database)
+):
+    # Retrieve the redirect mapping
+    redirect_doc = await db.redirects.find_one({"redirect_id": id})
+    if not redirect_doc:
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # Replay/duplicate protection
+    if redirect_doc.get("consumed", False):
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # 120 seconds TTL check
+    if time.time() - redirect_doc["created_at"] > 120:
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # Atomically mark the redirect ID as consumed
+    result = await db.redirects.update_one(
+        {"_id": redirect_doc["_id"], "consumed": False},
+        {"$set": {"consumed": True}}
+    )
+    if result.modified_count == 0:
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # Secure server-side HTTP 302 redirect
+    return RedirectResponse(url=redirect_doc["target_url"], status_code=302)
+
+
+@app.post("/redirect")
+@app.post("/api/verify-redirect")
+async def redirect_post_endpoint(
+    request: Request,
+    body: dict = Body(...),
+    db = Depends(get_database)
+):
+    redirect_id = body.get("id")
+    if not redirect_id:
+        raise HTTPException(status_code=400, detail="Missing redirect ID")
+
+    redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
+    if not redirect_doc:
+        raise HTTPException(status_code=404, detail="Redirect not found")
+
+    if redirect_doc.get("consumed", False):
+        raise HTTPException(status_code=410, detail="Redirect already consumed")
+
+    if time.time() - redirect_doc["created_at"] > 120:
+        raise HTTPException(status_code=410, detail="Redirect expired")
+
+    # Atomically mark as consumed
+    result = await db.redirects.update_one(
+        {"_id": redirect_doc["_id"], "consumed": False},
+        {"$set": {"consumed": True}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=410, detail="Redirect already consumed")
+
+    return {"status": "success", "destination": redirect_doc["target_url"]}
 
 
 def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
