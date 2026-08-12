@@ -683,8 +683,9 @@ GATEWAY_TEMPLATE = """
             } catch(e) {}
 
             // 2.1 Tab and Browser Window switching protection
+            let onVisibilityChange;
             try {
-                const handleBlurOrHide = function() {
+                const handleHide = function() {
                     if (!tamperingDetected) {
                         reportViolation("Tab/Window switching detected");
                         showError(
@@ -693,12 +694,12 @@ GATEWAY_TEMPLATE = """
                         );
                     }
                 };
-                window.addEventListener('blur', handleBlurOrHide);
-                document.addEventListener('visibilitychange', function() {
+                onVisibilityChange = function() {
                     if (document.visibilityState === 'hidden') {
-                        handleBlurOrHide();
+                        handleHide();
                     }
-                });
+                };
+                document.addEventListener('visibilitychange', onVisibilityChange);
             } catch(e) {}
 
             // 1. Strict Google Chrome Only Browser Check
@@ -827,6 +828,9 @@ GATEWAY_TEMPLATE = """
 
                         nativeSetTimeout(() => {
                             if (!tamperingDetected) {
+                                try {
+                                    document.removeEventListener('visibilitychange', onVisibilityChange);
+                                } catch(e) {}
                                 const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
                                 nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken));
                             }
@@ -1013,6 +1017,8 @@ async def continue_endpoint(
             if user_id:
                 await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
                 await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+            # INSTANTLY EXPIRE!
+            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return RedirectResponse(url="/blocked", status_code=302)
 
     cookie_session_id = request.cookies.get("session_id")
@@ -1041,6 +1047,8 @@ async def continue_endpoint(
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
+        # INSTANTLY EXPIRE!
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Protection 3: Reusing an already completed/consumed verification session
@@ -1066,6 +1074,8 @@ async def continue_endpoint(
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, reason, request, db)
+        # INSTANTLY EXPIRE!
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Consume/invalidate token atomically server-side to prevent TOCTOU race conditions / parallel replay
@@ -1089,6 +1099,7 @@ async def continue_endpoint(
 
     if is_browser:
         import hashlib
+        import secrets
         redirect_id = secrets.token_urlsafe(8)
         salt = secrets.token_urlsafe(16)
         tab_token = secrets.token_urlsafe(16)
@@ -1110,7 +1121,7 @@ async def continue_endpoint(
             "user_agent": request.headers.get("user-agent", ""),
             "session_id": cookie_session_id or session.get("session_id"),
             "tab_token": tab_token,
-            "user_id": user_id_str,
+            "user_id": str(user_id) if user_id else None,
             "short_id": short_id
         })
 
