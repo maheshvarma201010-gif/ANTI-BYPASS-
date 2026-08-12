@@ -244,6 +244,8 @@ async def test_reused_token():
     db = MagicMock()
     db.sessions = AsyncMock()
     db.users = AsyncMock()
+    db.redirects = AsyncMock()
+    db.redirects.insert_one = AsyncMock()
 
     request = MagicMock(spec=Request)
     request.client = MagicMock()
@@ -393,6 +395,8 @@ async def test_continue_endpoint_browser_html():
     db = MagicMock()
     db.sessions = AsyncMock()
     db.users = AsyncMock()
+    db.redirects = AsyncMock()
+    db.redirects.insert_one = AsyncMock()
 
     request = MagicMock(spec=Request)
     request.client = MagicMock()
@@ -475,3 +479,163 @@ async def test_blocked_page_redirects_if_query_params_present():
     # It must return a 302 redirect to /blocked without query parameters
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_success():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = "test_redir_id"
+    target_url = "https://example.com/target"
+
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": target_url,
+        "created_at": time.time(),
+        "consumed": False
+    }
+
+    # Simulate successful atomic update (modified_count == 1)
+    update_result = MagicMock()
+    update_result.modified_count = 1
+    db.redirects.update_one.return_value = update_result
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {}
+
+    response = await redirect_endpoint(request, redirect_id, db)
+    assert response.status_code == 302
+    assert response.headers["location"] == target_url
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_invalid_id():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    db.redirects.find_one.return_value = None
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {}
+
+    response = await redirect_endpoint(request, "invalid_id", db)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_already_consumed():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = "test_redir_id"
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": "https://example.com",
+        "created_at": time.time(),
+        "consumed": True
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {}
+
+    response = await redirect_endpoint(request, redirect_id, db)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_expired():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = "test_redir_id"
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": "https://example.com",
+        "created_at": time.time() - 121,  # Older than 120 seconds
+        "consumed": False
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {}
+
+    response = await redirect_endpoint(request, redirect_id, db)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+
+
+@pytest.mark.asyncio
+async def test_redirect_post_endpoint_success():
+    from app.main import redirect_post_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = "test_redir_id"
+    target_url = "https://example.com/target"
+
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": target_url,
+        "created_at": time.time(),
+        "consumed": False
+    }
+
+    # Simulate successful atomic update (modified_count == 1)
+    update_result = MagicMock()
+    update_result.modified_count = 1
+    db.redirects.update_one.return_value = update_result
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {}
+
+    body = {"id": redirect_id}
+    response = await redirect_post_endpoint(request, body, db)
+    assert response["status"] == "success"
+    assert response["destination"] == target_url
+
+
+@pytest.mark.asyncio
+async def test_redirect_post_endpoint_consumed_or_expired():
+    from app.main import redirect_post_endpoint
+    from fastapi import HTTPException
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = "test_redir_id"
+
+    # Test already consumed
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": "https://example.com",
+        "created_at": time.time(),
+        "consumed": True
+    }
+
+    request = MagicMock(spec=Request)
+    body = {"id": redirect_id}
+
+    with pytest.raises(HTTPException) as exc_info:
+        await redirect_post_endpoint(request, body, db)
+    assert exc_info.value.status_code == 410
+    assert "already consumed" in exc_info.value.detail
