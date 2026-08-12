@@ -639,3 +639,175 @@ async def test_redirect_post_endpoint_consumed_or_expired():
         await redirect_post_endpoint(request, body, db)
     assert exc_info.value.status_code == 410
     assert "already consumed" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_sha256_success():
+    from app.main import redirect_endpoint
+    import hashlib
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = 'test_redir_id'
+    target_url = 'https://example.com/target'
+    salt = 'secure_salt_123'
+    client_ip = '1.2.3.4'
+    user_agent = 'test-agent'
+
+    expected_input = f'{client_ip}:{user_agent}:{salt}'
+    session_hash = hashlib.sha256(expected_input.encode()).hexdigest()
+
+    db.redirects.find_one.return_value = {
+        '_id': ObjectId(),
+        'redirect_id': redirect_id,
+        'target_url': target_url,
+        'created_at': time.time(),
+        'consumed': False,
+        'session_hash': session_hash,
+        'salt': salt
+    }
+
+    update_result = MagicMock()
+    update_result.modified_count = 1
+    db.redirects.update_one.return_value = update_result
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = client_ip
+    request.headers = {'user-agent': user_agent}
+
+    response = await redirect_endpoint(request, redirect_id, db)
+    assert response.status_code == 302
+    assert response.headers['location'] == target_url
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_sha256_mismatch_blocked():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = 'test_redir_id'
+    target_url = 'https://example.com/target'
+
+    db.redirects.find_one.return_value = {
+        '_id': ObjectId(),
+        'redirect_id': redirect_id,
+        'target_url': target_url,
+        'created_at': time.time(),
+        'consumed': False,
+        'session_hash': 'some_other_hash',
+        'salt': 'some_salt'
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = '1.2.3.4'
+    request.headers = {'user-agent': 'different-agent'}
+
+    response = await redirect_endpoint(request, redirect_id, db)
+    assert response.status_code == 302
+    assert response.headers['location'] == '/blocked'
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_tab_success():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = 'test_redir_id'
+    target_url = 'https://example.com/target'
+    session_id = 'valid_session_id_123'
+    tab_token = 'valid_tab_token_456'
+
+    db.redirects.find_one.return_value = {
+        '_id': ObjectId(),
+        'redirect_id': redirect_id,
+        'target_url': target_url,
+        'created_at': time.time(),
+        'consumed': False,
+        'session_id': session_id,
+        'tab_token': tab_token
+    }
+
+    update_result = MagicMock()
+    update_result.modified_count = 1
+    db.redirects.update_one.return_value = update_result
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = '1.2.3.4'
+    request.headers = {}
+    request.cookies = {'session_id': session_id}
+    request.query_params = {'tab': tab_token}
+
+    response = await redirect_endpoint(request, redirect_id, db)
+    assert response.status_code == 302
+    assert response.headers['location'] == target_url
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_tab_mismatch_blocked():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = 'test_redir_id'
+    target_url = 'https://example.com/target'
+    session_id = 'valid_session_id_123'
+    tab_token = 'valid_tab_token_456'
+
+    db.redirects.find_one.return_value = {
+        '_id': ObjectId(),
+        'redirect_id': redirect_id,
+        'target_url': target_url,
+        'created_at': time.time(),
+        'consumed': False,
+        'session_id': session_id,
+        'tab_token': tab_token
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = '1.2.3.4'
+    request.headers = {}
+    request.cookies = {'session_id': session_id}
+    request.query_params = {'tab': 'wrong_tab_token'}
+
+    response = await redirect_endpoint(request, redirect_id, db)
+    assert response.status_code == 302
+    assert response.headers['location'] == '/blocked'
+
+
+@pytest.mark.asyncio
+async def test_redirect_endpoint_session_mismatch_blocked():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = 'test_redir_id'
+    target_url = 'https://example.com/target'
+    session_id = 'valid_session_id_123'
+    tab_token = 'valid_tab_token_456'
+
+    db.redirects.find_one.return_value = {
+        '_id': ObjectId(),
+        'redirect_id': redirect_id,
+        'target_url': target_url,
+        'created_at': time.time(),
+        'consumed': False,
+        'session_id': session_id,
+        'tab_token': tab_token
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = '1.2.3.4'
+    request.headers = {}
+    request.cookies = {'session_id': 'different_session'}
+    request.query_params = {'tab': tab_token}
+
+    response = await redirect_endpoint(request, redirect_id, db)
+    assert response.status_code == 302
+    assert response.headers['location'] == '/blocked'

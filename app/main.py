@@ -583,6 +583,7 @@ GATEWAY_TEMPLATE = """
             } catch(e) {}
 
             const REDIRECT_ID = "{redirect_id}";
+            const TAB_TOKEN = "{tab_token}";
             const steps = [
                 { percent: 15, text: "Analyzing headers..." },
                 { percent: 35, text: "Verifying browser engine..." },
@@ -654,6 +655,38 @@ GATEWAY_TEMPLATE = """
                 nativeDefineProperty(document, 'open', { value: onTamperAttempt, writable: false, configurable: false });
                 nativeDefineProperty(document, 'write', { value: onTamperAttempt, writable: false, configurable: false });
                 nativeDefineProperty(document, 'writeln', { value: onTamperAttempt, writable: false, configurable: false });
+            } catch(e) {}
+
+            // Enforce same-tab context isolation using sessionStorage
+            try {
+                const storageKey = 'tab_token_' + REDIRECT_ID;
+                if (!sessionStorage.getItem(storageKey)) {
+                    sessionStorage.setItem(storageKey, TAB_TOKEN);
+                } else if (sessionStorage.getItem(storageKey) !== TAB_TOKEN) {
+                    showError(
+                        "Tab Security Violation",
+                        "Security violation: Redirection can only be completed in the exact same browser tab where the session started."
+                    );
+                    return;
+                }
+            } catch(e) {}
+
+            // 2.1 Tab and Browser Window switching protection
+            try {
+                const handleBlurOrHide = function() {
+                    if (!tamperingDetected) {
+                        showError(
+                            "Bypass Attempt Blocked",
+                            "Security violation: Tab or window switching detected. This verification must be completed in the exact same tab and browser window without interruption."
+                        );
+                    }
+                };
+                window.addEventListener('blur', handleBlurOrHide);
+                document.addEventListener('visibilitychange', function() {
+                    if (document.visibilityState === 'hidden') {
+                        handleBlurOrHide();
+                    }
+                });
             } catch(e) {}
 
             // 1. Strict Google Chrome Only Browser Check
@@ -782,7 +815,8 @@ GATEWAY_TEMPLATE = """
 
                         nativeSetTimeout(() => {
                             if (!tamperingDetected) {
-                                nativeReplace("/redirect?id=" + REDIRECT_ID);
+                                const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
+                                nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken));
                             }
                         }, 200);
                     } catch (e) {
@@ -1042,7 +1076,16 @@ async def continue_endpoint(
     is_browser = "text/html" in accept_header and "test-agent" not in user_agent and "pytest" not in user_agent
 
     if is_browser:
+        import hashlib
         redirect_id = secrets.token_urlsafe(8)
+        salt = secrets.token_urlsafe(16)
+        tab_token = secrets.token_urlsafe(16)
+        normalized_ua = request.headers.get("user-agent", "").strip()
+        client_ip = get_client_ip(request)
+
+        session_hash_input = f"{client_ip}:{normalized_ua}:{salt}"
+        session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()
+
         # Store redirect mapping in redirects collection with 120s TTL
         await db.redirects.insert_one({
             "redirect_id": redirect_id,
@@ -1050,11 +1093,15 @@ async def continue_endpoint(
             "created_at": time.time(),
             "consumed": False,
             "client_ip": client_ip,
-            "user_agent": request.headers.get("user-agent", "")
+            "session_hash": session_hash,
+            "salt": salt,
+            "user_agent": request.headers.get("user-agent", ""),
+            "session_id": cookie_session_id or session.get("session_id"),
+            "tab_token": tab_token
         })
 
         # Return our beautiful premium secure transition gateway page!
-        html_content = GATEWAY_TEMPLATE.replace("{redirect_id}", redirect_id)
+        html_content = GATEWAY_TEMPLATE.replace("{redirect_id}", redirect_id).replace("{tab_token}", tab_token)
         return HTMLResponse(content=html_content, status_code=200)
 
     # Redirect to the final destination
@@ -1078,6 +1125,30 @@ async def redirect_endpoint(
 
     # 120 seconds TTL check
     if time.time() - redirect_doc["created_at"] > 120:
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
+    session_hash = redirect_doc.get("session_hash")
+    salt = redirect_doc.get("salt")
+    if session_hash and salt:
+        import hashlib
+        normalized_ua = request.headers.get("user-agent", "").strip()
+        client_ip = get_client_ip(request)
+        expected_input = f"{client_ip}:{normalized_ua}:{salt}"
+        expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
+        if session_hash != expected_hash:
+            return RedirectResponse(url="/blocked", status_code=302)
+
+    # Same-session validation
+    expected_session_id = redirect_doc.get("session_id")
+    cookie_session_id = request.cookies.get("session_id")
+    if expected_session_id and expected_session_id != cookie_session_id:
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # Same-tab validation
+    expected_tab_token = redirect_doc.get("tab_token")
+    tab_param = request.query_params.get("tab")
+    if expected_tab_token and expected_tab_token != tab_param:
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Atomically mark the redirect ID as consumed
@@ -1112,6 +1183,30 @@ async def redirect_post_endpoint(
 
     if time.time() - redirect_doc["created_at"] > 120:
         raise HTTPException(status_code=410, detail="Redirect expired")
+
+    # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
+    session_hash = redirect_doc.get("session_hash")
+    salt = redirect_doc.get("salt")
+    if session_hash and salt:
+        import hashlib
+        normalized_ua = request.headers.get("user-agent", "").strip()
+        client_ip = get_client_ip(request)
+        expected_input = f"{client_ip}:{normalized_ua}:{salt}"
+        expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
+        if session_hash != expected_hash:
+            raise HTTPException(status_code=403, detail="Session verification failed")
+
+    # Same-session validation
+    expected_session_id = redirect_doc.get("session_id")
+    cookie_session_id = request.cookies.get("session_id")
+    if expected_session_id and expected_session_id != cookie_session_id:
+        raise HTTPException(status_code=403, detail="Session verification failed")
+
+    # Same-tab validation
+    expected_tab_token = redirect_doc.get("tab_token")
+    tab_param = body.get("tab")
+    if expected_tab_token and expected_tab_token != tab_param:
+        raise HTTPException(status_code=403, detail="Tab security violation")
 
     # Atomically mark as consumed
     result = await db.redirects.update_one(
