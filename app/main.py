@@ -1381,22 +1381,9 @@ async def original_shortlink(
     short_id: str,
     db = Depends(get_database)
 ):
-
-
     # Health and special routes exceptions
     if short_id in ["health", "continue"]:
         raise HTTPException(status_code=404)
-
-    # Check for userscript/bypass tool indicators in query parameters or Referer
-    is_bypass, bypass_reason = detect_userscript_bypass(request)
-
-    if is_bypass:
-        link = await db.protected_links.find_one({"short_id": short_id})
-        if link:
-            user_id = ObjectId(link['user_id'])
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        return RedirectResponse(url="/blocked", status_code=302)
 
     # 1. Fetch the mapping
     link = await db.protected_links.find_one({"short_id": short_id})
@@ -1408,6 +1395,24 @@ async def original_shortlink(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # 2. Check if the shortener domain/base URL is specifically Arolinks or Vplinks
+    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url") or ""
+    is_arolinks_or_vplinks = "arolinks" in shortener_base_url.lower() or "vplinks" in shortener_base_url.lower()
+
+    # If NOT Arolinks or Vplinks, completely bypass all anti-bypass checks and redirect directly!
+    if not is_arolinks_or_vplinks:
+        return RedirectResponse(url=link["original_url"], status_code=302)
+
+    # ============== ENFORCE ANTI-BYPASS SUITE FOR AROLINKS/VPLINKS ONLY ==============
+
+    # Check for userscript/bypass tool indicators in query parameters or Referer
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+
+    if is_bypass:
+        await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+        await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+        return RedirectResponse(url="/blocked", status_code=302)
+
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
     referer = request.headers.get("referer", "")
@@ -1415,7 +1420,6 @@ async def original_shortlink(
     # ============== REFERER VALIDATION ==============
     # We do not block empty Referer because legitimate clicks from chat apps or browsers stripping Referer
     # must not be falsely flagged as bypasses. Referer is only verified if it is present.
-    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
     if not shortener_base_url:
         shortener_base_url = settings.BASE_URL
 

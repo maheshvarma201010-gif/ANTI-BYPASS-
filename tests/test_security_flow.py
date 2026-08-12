@@ -29,7 +29,7 @@ async def test_normal_verification_and_redirect():
     }
     db.users.find_one.return_value = {
         "_id": user_id,
-        "config": {"base_url": "https://myshortener.com"},
+        "config": {"base_url": "https://arolinks.com"},
         "success_count": 0
     }
 
@@ -39,7 +39,7 @@ async def test_normal_verification_and_redirect():
     request.client.host = "1.2.3.4"
     request.headers = {
         "user-agent": "test-agent",
-        "referer": "https://myshortener.com/abc"
+        "referer": "https://arolinks.com/abc"
     }
 
     response = await original_shortlink(request, short_id, db)
@@ -176,7 +176,8 @@ async def test_empty_referer_from_shortlink_allowed():
     db.protected_links.find_one.return_value = {
         "user_id": str(user_id),
         "short_id": short_id,
-        "original_url": "https://example.com"
+        "original_url": "https://example.com",
+        "shortener_base_url": "https://arolinks.com"
     }
 
     async def mock_find_one(query, *args, **kwargs):
@@ -184,7 +185,7 @@ async def test_empty_referer_from_shortlink_allowed():
             return None
         return {
             "_id": user_id,
-            "config": {"base_url": "https://myshortener.com"}
+            "config": {"base_url": "https://arolinks.com"}
         }
     db.users.find_one = mock_find_one
 
@@ -289,7 +290,8 @@ async def test_invalid_referer():
     db.protected_links.find_one.return_value = {
         "user_id": str(user_id),
         "short_id": short_id,
-        "original_url": "https://example.com"
+        "original_url": "https://example.com",
+        "shortener_base_url": "https://arolinks.com"
     }
 
     async def mock_find_one(query, *args, **kwargs):
@@ -297,7 +299,7 @@ async def test_invalid_referer():
             return None
         return {
             "_id": user_id,
-            "config": {"base_url": "https://myshortener.com"}
+            "config": {"base_url": "https://arolinks.com"}
         }
     db.users.find_one = mock_find_one
 
@@ -328,7 +330,8 @@ async def test_absolute_url_query_parameter_injection_blocked():
     db.protected_links.find_one.return_value = {
         "user_id": str(ObjectId()),
         "short_id": short_id,
-        "original_url": "https://example.com"
+        "original_url": "https://example.com",
+        "shortener_base_url": "https://arolinks.com"
     }
     db.users.find_one.return_value = {
         "_id": ObjectId(),
@@ -356,7 +359,8 @@ async def test_blocked_greasyfork_userscript_urls():
     db.protected_links.find_one.return_value = {
         "user_id": str(ObjectId()),
         "short_id": short_id,
-        "original_url": "https://example.com"
+        "original_url": "https://example.com",
+        "shortener_base_url": "https://arolinks.com"
     }
     db.users.find_one.return_value = {
         "_id": ObjectId(),
@@ -438,7 +442,8 @@ async def test_original_shortlink_nicktrick_blocked():
     db.protected_links.find_one.return_value = {
         "user_id": str(ObjectId()),
         "short_id": short_id,
-        "original_url": "https://example.com"
+        "original_url": "https://example.com",
+        "shortener_base_url": "https://arolinks.com"
     }
     db.users.find_one.return_value = {
         "_id": ObjectId(),
