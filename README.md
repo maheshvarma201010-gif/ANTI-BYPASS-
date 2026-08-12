@@ -4,12 +4,12 @@ A state-of-the-art, high-performance, and extremely secure backend verification 
 
 ---
 
-## ⚡ Architecture Flow
+## ⚡ Redirection Redesign Model
 
-The system operates entirely on the server-side to guarantee that no client-side script or browser storage (like localStorage) can be manipulated or bypassed.
+The system operates entirely on the server-side to guarantee that no client-side script or browser storage can be manipulated or bypassed.
 
 ```
-Original Shortlink (e.g. https://shortener.com/abc)
+Original Shortlink (e.g. https://arolinks.com/links?nicktrick=...)
       ↓
 Backend Verification (Check Referer & config on GET /{short_id})
       ↓
@@ -19,37 +19,41 @@ Create Secure Server-side Session & Cryptographic Continuation Token
       ↓
 Redirect to /continue?token=RANDOM_TOKEN (with secure cookie set)
       ↓
-Anti-bypass/session validation (Cookie & referer presence check)
+Anti-bypass/session validation (Cookie, same-tab Storage matching & referer presence check)
       ↓
-Final Destination URL Redirect (HTTP 302)
+Redirection Handled strictly on Server Side (GET /redirect?id=RED_ID) (HTTP 302)
 ```
 
 ---
 
-## 🔒 Security & Anti-Bypass Protections
+## 🔒 Advanced Security & Anti-Bypass Protections
 
-The backend implements comprehensive defenses against direct pasting, parameter sharing, and replay attacks:
+The backend implements comprehensive, industry-leading defenses against direct pasting, parameter sharing, and replay attacks:
 
 ### 1. 🍪 Secure Server-Side Sessions & Cookies
 - When a user opens the original shortlink, the backend validates their entry and creates a temporary server-side session in MongoDB with a cryptographically secure, random 256-bit `session_id`.
 - The `session_id` is set as an `HttpOnly`, `SameSite=Lax` cookie on the client's browser, restricted to `path="/"`.
-- This cookie is dynamically configured with the `secure` flag based on the incoming request scheme (True for HTTPS, False for HTTP) to prevent local and CI test environments from discarding cookies.
+- This cookie is dynamically configured with the `secure` flag based on the incoming request scheme (True for HTTPS, False for HTTP).
 
 ### 2. 🎟️ One-Time Continuation Tokens (Replay Protection)
 - Together with the session, a cryptographically secure random one-time `token` is generated and bound to the session.
 - When the client requests the `/continue` endpoint, the server atomically retrieves and invalidates the session in a single database transaction (`update_one` with `"consumed": False` filter). This completely eliminates any **Time-of-Check to Time-of-Use (TOCTOU)** race conditions and parallel request replays.
 
 ### 3. ⏱️ Short-Lived Expiration (Session TTL)
-- Continuation sessions are valid for a maximum of **300 seconds (5 minutes)**. Any requests made after expiration are securely rejected.
+- Continuation sessions are valid for a maximum of **300 seconds (5 minutes)**, and redirection tokens expire in **120 seconds**. Any requests made after expiration are securely rejected.
 
-### 4. 🔗 Adaptive Referer Validation
-- Referers are fully verified at the entrypoint (`/{short_id}`). To accommodate browsers, private tabs, or chat applications (like Telegram, Discord) that strip the Referer header, empty/missing Referers are safely allowed.
-- If a Referer is present, the system runs an **Adaptive Root Domain Substring Match** (`check_referer_root`). This extracts core domain names (e.g., `"arolinks"` or `"vplinks"`) by discarding common TLDs and subdomains. Legitimate redirects from alternative shortener domains (like `arolinks.co` instead of `arolinks.com`) are fully validated without false positives.
+### 4. 🔒 Server-Side ID Redirection Mapping (Hidden URLs)
+- Target destination URLs are kept **100% hidden** on the client side. No base64-encoded strings or URL references are ever embedded in the gateway template.
+- REDIRECT is executed entirely on the server-side via `GET /redirect` using a unique, random redirection ID mapped in the server MongoDB collection, which redirects with an HTTP 302 response on verification success.
 
-### 5. 📋 Direct Paste/Share Protection
-- The continuation URL `/continue?token=...` alone is not sufficient for access. If pasted directly into another browser or shared:
-  - The request will fail because the required `session_id` cookie is missing ("Session mismatch").
-  - The request will fail because the browser sends an empty Referer header when pasting links directly into the address bar. The `/continue` route strictly enforces that the **Referer header must be present** on the redirect, completely stopping copy-pasted redirects.
+### 5. 📑 Same-Tab Isolation via sessionStorage & SHA-256 Hashing
+- Enforces strict same-tab, same-browser, and same-session execution using:
+  - Cryptographically secure `tab_token` matched inside `sessionStorage` (preventing tab duplication or URL sharing).
+  - SHA-256 session integrity checks hashing the client's IP and User-Agent with a secure server-side salt.
+  - Active tab visibility tracking via the `visibilitychange` API. If tab switching, minimized browser window, or focus loss is detected, it instantly posts to `/report-violation` to permanently consume/expire the session and trigger Telegram alerts.
+
+### 6. 🔗 Tailored Referer Integrity Check for Arolinks and Vplinks
+- Only permits manual solving from legitimate sources. Extends bypass keyword matching globally for third-party domains, but provides precise, custom-tailored exceptions specifically for **Arolinks** and **Vplinks** referers, completely eliminating false positives for legitimate users solving shorteners manually.
 
 ---
 
@@ -67,32 +71,10 @@ Our anti-bypass bot allows creators to manage their shortener configurations eas
 
 ---
 
-## 🛠️ Setup & Environment Configuration
-
-### Prerequisites
-- Python 3.12+
-- MongoDB instance
-
-### Environment Variables
-Configure the following in a `.env` file:
-```env
-PROJECT_NAME="Anti-Bypass Protection"
-SECRET_KEY="your-secret-key-here"
-ENCRYPTION_KEY="32-byte-long-secret-key-for-aes-!!"
-MONGODB_URL="mongodb://localhost:27017"
-DATABASE_NAME="antibypass"
-TELEGRAM_BOT_TOKEN="your_bot_token"
-BASE_URL="https://yourdomain.com"
-```
-
----
-
 ## 🧪 Testing
 
 Execute the comprehensive test suite with:
 ```bash
-python -m venv venv
-source venv/bin/activate
 pip install -r requirements.txt
-pytest
+python -m pytest
 ```

@@ -493,6 +493,12 @@ GATEWAY_TEMPLATE = """
             box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
             border-radius: 100px;
             transition: width 0.3s ease;
+            animation: pulse-glow 2s infinite alternate;
+        }
+
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 8px rgba(59, 130, 246, 0.4); }
+            100% { box-shadow: 0 0 18px rgba(59, 130, 246, 0.8); }
         }
 
         .status-info {
@@ -947,15 +953,20 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     referer = request.headers.get("referer", "")
     referer_decoded = unquote(referer).lower()
 
+    # Determine if referer is from arolinks or vplinks
+    is_arolinks_or_vplinks = "arolinks" in referer_decoded or "vplinks" in referer_decoded
+
     banned_referer_keywords = [
         "564048",
-        "smart nicktrick",
-        "nicktrick",
         "greasyfork",
         "tampermonkey",
         "stealth final",
         "github.com"
     ]
+
+    # Only enforce "nicktrick" and "smart nicktrick" blocks for OTHER domains, not for arolinks/vplinks
+    if not is_arolinks_or_vplinks:
+        banned_referer_keywords.extend(["nicktrick", "smart nicktrick"])
 
     for kw in banned_referer_keywords:
         if kw in referer_decoded:
@@ -966,12 +977,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "564048",
         "smart nicktrick",
         "nicktrick",
-        "nick",
-        "trick",
         "greasyfork",
         "tampermonkey",
-        "stealth final",
-        "smart"
+        "stealth final"
     ]
 
     for k, v in request.query_params.items():
