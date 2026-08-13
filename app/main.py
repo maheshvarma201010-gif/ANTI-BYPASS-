@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query
+from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
@@ -954,7 +954,8 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     referer_decoded = unquote(referer).lower()
 
     # Determine if referer is from arolinks or vplinks
-    is_arolinks_or_vplinks = "arolinks" in referer_decoded or "vplinks" in referer_decoded
+    from app.core.arolinks_vplinks import is_arolinks_or_vplinks_url
+    is_arolinks_or_vplinks = is_arolinks_or_vplinks_url(referer_decoded)
 
     banned_referer_keywords = [
         "564048",
@@ -1014,6 +1015,7 @@ async def blocked_page(request: Request):
 @app.get("/continue")
 async def continue_endpoint(
     request: Request,
+    background_tasks: BackgroundTasks,
     token: str = Query(...),
     db = Depends(get_database)
 ):
@@ -1030,7 +1032,7 @@ async def continue_endpoint(
             short_id = session.get("short_id", "unknown")
             if user_id:
                 await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-                await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+                background_tasks.add_task(send_bypass_notification, user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
             # INSTANTLY EXPIRE!
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return RedirectResponse(url="/blocked", status_code=302)
@@ -1060,7 +1062,7 @@ async def continue_endpoint(
     if time.time() - session["created_at"] > 300:
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
+            background_tasks.add_task(send_bypass_notification, user_id, short_id, "Expired verification session", request, db)
         # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return RedirectResponse(url="/blocked", status_code=302)
@@ -1069,7 +1071,7 @@ async def continue_endpoint(
     if session.get("consumed", False):
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, "Token already used", request, db)
+            background_tasks.add_task(send_bypass_notification, user_id, short_id, "Token already used", request, db)
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Protection 4: Session validation (either Cookie match OR fallback to IP+UA match if cookies blocked/incognito)
@@ -1087,7 +1089,7 @@ async def continue_endpoint(
 
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, reason, request, db)
+            background_tasks.add_task(send_bypass_notification, user_id, short_id, reason, request, db)
         # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return RedirectResponse(url="/blocked", status_code=302)
@@ -1100,7 +1102,7 @@ async def continue_endpoint(
     if result.modified_count == 0:
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, "Token already used", request, db)
+            background_tasks.add_task(send_bypass_notification, user_id, short_id, "Token already used", request, db)
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Retrieve real/original destination URL
@@ -1205,6 +1207,7 @@ async def redirect_endpoint(
 @app.post("/report-violation")
 async def report_violation_endpoint(
     request: Request,
+    background_tasks: BackgroundTasks,
     body: dict = Body(...),
     db = Depends(get_database)
 ):
@@ -1250,7 +1253,8 @@ async def report_violation_endpoint(
         )
 
         # Async send instant Telegram notification
-        await send_bypass_notification(
+        background_tasks.add_task(
+            send_bypass_notification,
             user_id,
             short_id,
             f"Instant Client Violation: {reason}",
@@ -1379,6 +1383,7 @@ def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
 async def original_shortlink(
     request: Request,
     short_id: str,
+    background_tasks: BackgroundTasks,
     db = Depends(get_database)
 ):
     # Health and special routes exceptions
@@ -1397,10 +1402,10 @@ async def original_shortlink(
 
     # 2. Check if the shortener domain/base URL is specifically Arolinks or Vplinks
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url") or ""
-    is_arolinks_or_vplinks = "arolinks" in shortener_base_url.lower() or "vplinks" in shortener_base_url.lower()
 
+    from app.core.arolinks_vplinks import is_arolinks_or_vplinks_url
     # If NOT Arolinks or Vplinks, completely bypass all anti-bypass checks and redirect directly!
-    if not is_arolinks_or_vplinks:
+    if not is_arolinks_or_vplinks_url(shortener_base_url):
         return RedirectResponse(url=link["original_url"], status_code=302)
 
     # ============== ENFORCE ANTI-BYPASS SUITE FOR AROLINKS/VPLINKS ONLY ==============
@@ -1410,7 +1415,7 @@ async def original_shortlink(
 
     if is_bypass:
         await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-        await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+        background_tasks.add_task(send_bypass_notification, user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         return RedirectResponse(url="/blocked", status_code=302)
 
     client_ip = get_client_ip(request)
@@ -1463,7 +1468,7 @@ async def original_shortlink(
             {"$inc": {"referer_failures": 1, "blocked_count": 1}}
         )
         # Send Telegram notification
-        await send_bypass_notification(user_id, short_id, "Invalid referer", request, db)
+        background_tasks.add_task(send_bypass_notification, user_id, short_id, "Invalid referer", request, db)
         # Return bypass detected page for invalid referer
         return RedirectResponse(url="/blocked", status_code=302)
 

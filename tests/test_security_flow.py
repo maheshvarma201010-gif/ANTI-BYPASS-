@@ -1,3 +1,4 @@
+from fastapi import BackgroundTasks
 import pytest
 import time
 from fastapi import Request
@@ -42,7 +43,7 @@ async def test_normal_verification_and_redirect():
         "referer": "https://arolinks.com/abc"
     }
 
-    response = await original_shortlink(request, short_id, db)
+    response = await original_shortlink(request, short_id, BackgroundTasks(), db)
 
     # Verify that redirection happened to continue endpoint
     assert response.status_code == 302
@@ -86,7 +87,7 @@ async def test_normal_verification_and_redirect():
         "consumed": False
     }
 
-    final_resp = await continue_endpoint(continue_request, token, db)
+    final_resp = await continue_endpoint(continue_request, BackgroundTasks(), token, db)
 
     # Successful final redirect checks
     assert final_resp.status_code == 302
@@ -120,7 +121,7 @@ async def test_session_mismatch():
         "consumed": False
     }
 
-    response = await continue_endpoint(request, "valid_token", db)
+    response = await continue_endpoint(request, BackgroundTasks(), "valid_token", db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
     assert response.status_code == 302
@@ -150,7 +151,7 @@ async def test_expired_session():
         "consumed": False
     }
 
-    response = await continue_endpoint(request, "valid_token", db)
+    response = await continue_endpoint(request, BackgroundTasks(), "valid_token", db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
     assert response.status_code == 302
@@ -198,7 +199,7 @@ async def test_empty_referer_from_shortlink_allowed():
         "referer": ""
     }
 
-    response = await original_shortlink(request, short_id, db)
+    response = await original_shortlink(request, short_id, BackgroundTasks(), db)
     # Empty referer must NOT be blocked, it should proceed to set cookie and redirect
     assert response.status_code == 302
     assert response.headers["location"].startswith("/continue?token=")
@@ -217,7 +218,7 @@ async def test_invalid_token_direct_continuation():
 
     db.sessions.find_one.return_value = None
 
-    response = await continue_endpoint(request, "non_existent_token", db)
+    response = await continue_endpoint(request, BackgroundTasks(), "non_existent_token", db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
 
@@ -233,7 +234,7 @@ async def test_continue_endpoint_empty_referer_blocked_direct_paste():
     request.headers = {"user-agent": "test-agent", "referer": ""} # Empty Referer
     request.cookies = {"session_id": "cookie_id"}
 
-    response = await continue_endpoint(request, "valid_token", db)
+    response = await continue_endpoint(request, BackgroundTasks(), "valid_token", db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
     assert response.status_code == 302
@@ -265,7 +266,7 @@ async def test_reused_token():
         "consumed": True # Token already used/consumed
     }
 
-    response = await continue_endpoint(request, "valid_token", db)
+    response = await continue_endpoint(request, BackgroundTasks(), "valid_token", db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
 
@@ -313,7 +314,7 @@ async def test_invalid_referer():
     }
     request.base_url = "https://my-app.com"
 
-    response = await original_shortlink(request, short_id, db)
+    response = await original_shortlink(request, short_id, BackgroundTasks(), db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
     assert response.status_code == 302
@@ -344,7 +345,7 @@ async def test_absolute_url_query_parameter_injection_blocked():
     # Query parameters contain an absolute URL
     request.query_params = {"any_key": "https://target-payload.com"}
 
-    response = await original_shortlink(request, short_id, db)
+    response = await original_shortlink(request, short_id, BackgroundTasks(), db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
 
@@ -376,7 +377,7 @@ async def test_blocked_greasyfork_userscript_urls():
         "referer": "https://update.greasyfork.org/scripts/564048/Smart%20nicktrick%20Redirect%20%28Stealth%20Final%29.user.js"
     }
 
-    response1 = await original_shortlink(request1, short_id, db)
+    response1 = await original_shortlink(request1, short_id, BackgroundTasks(), db)
     assert response1.status_code == 302
     assert response1.headers["location"] == "/blocked"
 
@@ -389,7 +390,7 @@ async def test_blocked_greasyfork_userscript_urls():
         "referer": "https://update.greasyfork.org/scripts/564048/Smart nicktrick Redirect %28Stealth%20Final%29.user.js"
     }
 
-    response2 = await original_shortlink(request2, short_id, db)
+    response2 = await original_shortlink(request2, short_id, BackgroundTasks(), db)
     assert response2.status_code == 302
     assert response2.headers["location"] == "/blocked"
 
@@ -424,7 +425,7 @@ async def test_continue_endpoint_browser_html():
         "original_url": "https://destination-url.com"
     }
 
-    response = await continue_endpoint(request, "valid_token", db)
+    response = await continue_endpoint(request, BackgroundTasks(), "valid_token", db)
     assert response.status_code == 200
     body_decoded = response.body.decode()
     assert "Securing Connection..." in body_decoded
@@ -456,7 +457,7 @@ async def test_original_shortlink_nicktrick_blocked():
     # Query parameters contain "nicktrick"
     request.query_params = {"nicktrick": "some_payload"}
 
-    response = await original_shortlink(request, short_id, db)
+    response = await original_shortlink(request, short_id, BackgroundTasks(), db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
 
@@ -860,7 +861,7 @@ async def test_report_violation_endpoint_success():
     request.headers = {}
 
     body = {'id': redirect_id, 'reason': 'Tab switching detected'}
-    response = await report_violation_endpoint(request, body, db)
+    response = await report_violation_endpoint(request, BackgroundTasks(), body, db)
     assert response['status'] == 'success'
 
     db.redirects.update_one.assert_called()
@@ -882,6 +883,69 @@ async def test_continue_endpoint_any_param_extraction_blocked():
     # Using a totally arbitrary query parameter containing an absolute URL
     request.query_params = {"any_random_param": "https://example.com/dest_url"}
 
-    response = await continue_endpoint(request, token, db)
+    response = await continue_endpoint(request, BackgroundTasks(), token, db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
+
+
+@pytest.mark.asyncio
+async def test_original_shortlink_non_arolinks_vplinks_bypass_success():
+    db = MagicMock()
+    db.protected_links = AsyncMock()
+    db.users = AsyncMock()
+
+    short_id = "test_short"
+    original_url = "https://legit-target.com/file"
+
+    db.protected_links.find_one.return_value = {
+        "user_id": str(ObjectId()),
+        "short_id": short_id,
+        "original_url": original_url,
+        "shortener_base_url": "https://some-unrelated-shortener.com"
+    }
+    db.users.find_one.return_value = {
+        "_id": ObjectId(),
+        "config": {"base_url": "https://some-unrelated-shortener.com"}
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {}
+
+    response = await original_shortlink(request, short_id, BackgroundTasks(), db)
+    # Since it is NOT Arolinks or Vplinks, it must immediately redirect to the target URL!
+    assert response.status_code == 302
+    assert response.headers["location"] == original_url
+
+
+@pytest.mark.asyncio
+async def test_background_tasks_offloads_notification():
+    db = MagicMock()
+    db.sessions = AsyncMock()
+    db.users = AsyncMock()
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "1.2.3.4"
+    request.headers = {"user-agent": "test-agent", "referer": "https://some-referer.com"}
+    request.cookies = {"session_id": "cookie_id"}
+
+    db.sessions.find_one.return_value = {
+        "_id": ObjectId(),
+        "session_id": "cookie_id",
+        "token": "valid_token",
+        "user_id": str(ObjectId()),
+        "client_ip": "1.2.3.4",
+        "user_agent": "test-agent",
+        "created_at": time.time() - 301, # Expired session
+        "consumed": False
+    }
+
+    background_tasks = BackgroundTasks()
+    # We will verify that background tasks are added successfully
+    response = await continue_endpoint(request, background_tasks, "valid_token", db)
+    assert response.status_code == 302
+    assert response.headers["location"] == "/blocked"
+    # Should have scheduled a background task
+    assert len(background_tasks.tasks) > 0
