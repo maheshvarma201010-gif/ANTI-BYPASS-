@@ -1,17 +1,17 @@
 # 🛡️ Premium URL Shortener Anti-Bypass Protection System
 
-A state-of-the-art, high-performance, and extremely secure backend verification system designed to protect URL shortener redirects from bypass attempts.
+A state-of-the-art, high-performance, and extremely secure backend verification system designed to protect URL shortener redirects from bypass attempts. Built with **FastAPI**, **MongoDB (Motor)**, and **aiogram**, this system provides absolute security while maintaining a seamless user experience.
 
 ---
 
 ## ⚡ Redirection Redesign Model
 
-The system operates entirely on the server-side to guarantee that no client-side script or browser storage can be manipulated or bypassed.
+The system operates entirely on the server-side to guarantee that no client-side script, browser extension, or storage manipulation can bypass the target redirects.
 
 ```
-Original Shortlink (e.g. https://arolinks.com/links?nicktrick=...)
+Original Shortlink (e.g. https://arolinks.com/links?...)
       ↓
-Backend Verification (Check Referer & config on GET /{short_id})
+Backend Verification (Checks config & pre-determines platform on GET /{short_id})
       ↓
 Verification successful
       ↓
@@ -52,8 +52,11 @@ The backend implements comprehensive, industry-leading defenses against direct p
   - SHA-256 session integrity checks hashing the client's IP and User-Agent with a secure server-side salt.
   - Active tab visibility tracking via the `visibilitychange` API. If tab switching, minimized browser window, or focus loss is detected, it instantly posts to `/report-violation` to permanently consume/expire the session and trigger Telegram alerts.
 
-### 6. 🔗 Tailored Referer Integrity Check for Arolinks and Vplinks
-- Only permits manual solving from legitimate sources. Extends bypass keyword matching globally for third-party domains, but provides precise, custom-tailored exceptions specifically for **Arolinks** and **Vplinks** referers, completely eliminating false positives for legitimate users solving shorteners manually.
+### 6. 🔗 Dynamic Referral Relaxation for Arolinks and Vplinks
+- Resolves all false-positive blocks during manual solve processes on popular networks.
+- Before running the core bypass detectors, the backend looks up the shortener configuration from MongoDB. If the link is created via **Arolinks** or **Vplinks** (or the Referer matches them), the system dynamically relaxes the restrictions:
+  - **Skips query parameter absolute URL checks:** Prevents blocks caused by arolinks/vplinks appending absolute URLs or tracking parameters to the destination query.
+  - **Permits intermediate referral domains:** Since these networks route users through dynamic advertiser or publisher domains, the referer header is automatically validated to guarantee legitimate users are never shown "Bypass Detected".
 
 ---
 
@@ -71,7 +74,7 @@ Our anti-bypass bot allows creators to manage their shortener configurations eas
 
 ---
 
-## 🧪 Testing
+## 🧪 Testing & Verification
 
 Execute the comprehensive test suite with:
 ```bash

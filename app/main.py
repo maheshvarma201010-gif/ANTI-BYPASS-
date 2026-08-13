@@ -331,14 +331,14 @@ GATEWAY_TEMPLATE = """
         }
 
         .premium-card {
-            background: linear-gradient(135deg, rgba(10, 15, 30, 0.7) 0%, rgba(3, 5, 15, 0.8) 100%);
-            border: 1px solid rgba(59, 130, 246, 0.2);
+            background: linear-gradient(135deg, rgba(10, 15, 30, 0.8) 0%, rgba(3, 5, 20, 0.95) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.25);
             box-shadow:
-                0 40px 100px -30px rgba(0, 0, 0, 0.8),
-                0 0 50px -10px rgba(59, 130, 246, 0.1),
-                inset 0 1px 1px rgba(255, 255, 255, 0.03);
-            backdrop-filter: blur(25px);
-            border-radius: 24px;
+                0 40px 100px -30px rgba(0, 0, 0, 0.9),
+                0 0 50px -10px rgba(59, 130, 246, 0.15),
+                inset 0 1px 1px rgba(255, 255, 255, 0.04);
+            backdrop-filter: blur(30px);
+            border-radius: 28px;
             padding: 48px;
             text-align: center;
             position: relative;
@@ -347,27 +347,27 @@ GATEWAY_TEMPLATE = """
         }
 
         .premium-card.error-state {
-            border-color: rgba(220, 38, 38, 0.3);
+            border-color: rgba(239, 68, 68, 0.4);
             box-shadow:
-                0 40px 100px -30px rgba(0, 0, 0, 0.8),
-                0 0 50px -10px rgba(220, 38, 38, 0.15),
-                inset 0 1px 1px rgba(255, 255, 255, 0.03);
+                0 40px 100px -30px rgba(0, 0, 0, 0.9),
+                0 0 60px -10px rgba(239, 68, 68, 0.25),
+                inset 0 1px 1px rgba(255, 255, 255, 0.04);
         }
 
         .card-glow {
             position: absolute;
             top: 0;
-            left: 25%;
-            width: 50%;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.5), transparent);
-            box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+            left: 20%;
+            width: 60%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.7), transparent);
+            box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
             transition: all 0.5s ease;
         }
 
         .premium-card.error-state .card-glow {
-            background: linear-gradient(90deg, transparent, rgba(220, 38, 38, 0.5), transparent);
-            box-shadow: 0 0 20px rgba(220, 38, 38, 0.4);
+            background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.7), transparent);
+            box-shadow: 0 0 25px rgba(239, 68, 68, 0.6);
         }
 
         .shimmer {
@@ -947,14 +947,15 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
     except Exception as e:
         logger.error(f"Failed to send Telegram notification: {e}")
 
-def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
+def detect_userscript_bypass(request: Request, is_arolinks_or_vplinks: bool = False) -> tuple[bool, str]:
     from urllib.parse import unquote
 
     referer = request.headers.get("referer", "")
     referer_decoded = unquote(referer).lower()
 
     # Determine if referer is from arolinks or vplinks
-    is_arolinks_or_vplinks = "arolinks" in referer_decoded or "vplinks" in referer_decoded
+    if not is_arolinks_or_vplinks:
+        is_arolinks_or_vplinks = "arolinks" in referer_decoded or "vplinks" in referer_decoded
 
     banned_referer_keywords = [
         "564048",
@@ -971,6 +972,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     for kw in banned_referer_keywords:
         if kw in referer_decoded:
             return True, f"Banned userscript pattern '{kw}' detected in Referer"
+
+    # If it is arolinks or vplinks, we skip ALL query parameter validation checks to prevent false positives
+    if is_arolinks_or_vplinks:
+        return False, ""
 
     # Check query parameters (both raw and unquoted)
     banned_query_keywords = [
@@ -1019,36 +1024,57 @@ async def continue_endpoint(
 ):
 
 
+    # Retrieve session bound to token first so we can identify the link shortener
+    session = await db.sessions.find_one({"token": token})
+
+    # If it is a mock and not configured as a dictionary, treat it as None/not found
+    if session is not None and not isinstance(session, dict):
+        session = None
+
+    # Protection 1: Invalid/missing token
+    if not session:
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    user_id_str = session.get("user_id")
+    user_id = ObjectId(user_id_str) if user_id_str else None
+    short_id = session.get("short_id", "unknown")
+
+    referer = request.headers.get("referer", "")
+
+    # ============== PRE-DETERMINE AROLINKS OR VPLINKS ==============
+    is_arolinks_or_vplinks = False
+    if short_id != "unknown":
+        link = await db.protected_links.find_one({"short_id": short_id})
+        if link:
+            if not user_id:
+                user_id = ObjectId(link['user_id'])
+            user = await db.users.find_one({"_id": user_id})
+            if user:
+                shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+                if shortener_base_url and ("arolinks" in shortener_base_url.lower() or "vplinks" in shortener_base_url.lower()):
+                    is_arolinks_or_vplinks = True
+
+    if referer:
+        if "arolinks" in referer.lower() or "vplinks" in referer.lower():
+            is_arolinks_or_vplinks = True
+
     # Check for userscript/bypass tool indicators in query parameters or Referer
-    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
 
     if is_bypass:
-        session = await db.sessions.find_one({"token": token})
-        if session:
-            user_id_str = session.get("user_id")
-            user_id = ObjectId(user_id_str) if user_id_str else None
-            short_id = session.get("short_id", "unknown")
-            if user_id:
-                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-                await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-            # INSTANTLY EXPIRE!
-            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+        # INSTANTLY EXPIRE!
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return RedirectResponse(url="/blocked", status_code=302)
 
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
-    referer = request.headers.get("referer", "")
 
     # Direct paste/share protection of the redirect URL: Referer must be present on internal continuation redirect
     if not referer:
-        return RedirectResponse(url="/blocked", status_code=302)
-
-    # Retrieve session bound to token
-    session = await db.sessions.find_one({"token": token})
-
-    # Protection 1: Invalid/missing token
-    if not session:
         return RedirectResponse(url="/blocked", status_code=302)
 
     user_id_str = session.get("user_id")
@@ -1387,18 +1413,7 @@ async def original_shortlink(
     if short_id in ["health", "continue"]:
         raise HTTPException(status_code=404)
 
-    # Check for userscript/bypass tool indicators in query parameters or Referer
-    is_bypass, bypass_reason = detect_userscript_bypass(request)
-
-    if is_bypass:
-        link = await db.protected_links.find_one({"short_id": short_id})
-        if link:
-            user_id = ObjectId(link['user_id'])
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        return RedirectResponse(url="/blocked", status_code=302)
-
-    # 1. Fetch the mapping
+    # 1. Fetch the mapping first so we can determine the configured shortener details
     link = await db.protected_links.find_one({"short_id": short_id})
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
@@ -1412,13 +1427,29 @@ async def original_shortlink(
     user_agent = request.headers.get("user-agent", "")
     referer = request.headers.get("referer", "")
 
-    # ============== REFERER VALIDATION ==============
-    # We do not block empty Referer because legitimate clicks from chat apps or browsers stripping Referer
-    # must not be falsely flagged as bypasses. Referer is only verified if it is present.
+    # ============== PRE-DETERMINE AROLINKS OR VPLINKS ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
     if not shortener_base_url:
         shortener_base_url = settings.BASE_URL
 
+    is_arolinks_or_vplinks = False
+    if "arolinks" in shortener_base_url.lower() or "vplinks" in shortener_base_url.lower():
+        is_arolinks_or_vplinks = True
+    if referer:
+        if "arolinks" in referer.lower() or "vplinks" in referer.lower():
+            is_arolinks_or_vplinks = True
+
+    # Check for userscript/bypass tool indicators in query parameters or Referer
+    is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
+
+    if is_bypass:
+        await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+        await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # ============== REFERER VALIDATION ==============
+    # We do not block empty Referer because legitimate clicks from chat apps or browsers stripping Referer
+    # must not be falsely flagged as bypasses. Referer is only verified if it is present.
     shortener_domain = urlparse(shortener_base_url).netloc.lower()
     parsed_base = urlparse(str(request.base_url))
     base_netloc = parsed_base.netloc.lower()
@@ -1426,7 +1457,10 @@ async def original_shortlink(
     referer_valid = False
     referer_reason = ""
 
-    if not referer:
+    if is_arolinks_or_vplinks:
+        referer_valid = True
+        referer_reason = "arolinks_vplinks_bypass_allowed"
+    elif not referer:
         referer_valid = True
         referer_reason = "missing_referer_allowed"
     else:

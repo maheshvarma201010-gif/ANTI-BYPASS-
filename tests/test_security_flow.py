@@ -880,3 +880,49 @@ async def test_continue_endpoint_any_param_extraction_blocked():
     response = await continue_endpoint(request, token, db)
     assert response.status_code == 302
     assert response.headers["location"] == "/blocked"
+
+
+@pytest.mark.asyncio
+async def test_arolinks_vplinks_relaxation():
+    # Test that arolinks shorteners are relaxed and allow absolute URL / keyword query parameters
+    db = MagicMock()
+    db.protected_links = AsyncMock()
+    db.users = AsyncMock()
+    db.sessions = AsyncMock()
+    db.allowed_referers = MagicMock()
+    db.allowed_referers.find_one = AsyncMock(return_value=None)
+    db.validation_events = MagicMock()
+    db.validation_events.find_one = AsyncMock(return_value=None)
+    db.ip_whitelist = MagicMock()
+    db.ip_whitelist.find_one = AsyncMock(return_value=None)
+    db.sessions = AsyncMock()
+
+    user_id = ObjectId()
+    short_id = "arolinks_short"
+
+    # Protected link uses arolinks.com as its shortener
+    db.protected_links.find_one.return_value = {
+        "user_id": str(user_id),
+        "short_id": short_id,
+        "original_url": "https://example.com",
+        "shortener_base_url": "https://arolinks.com"
+    }
+    db.users.find_one.return_value = {
+        "_id": user_id,
+        "config": {"base_url": "https://arolinks.com"}
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "8.8.8.8"
+    request.headers = {
+        "user-agent": "test-agent",
+        "referer": "https://some-ad-publisher-domain.com" # Unknown/publisher domain
+    }
+    # Query parameters contain absolute URL and "bypass" keyword which is usually blocked
+    request.query_params = {"bypass": "https://some-target-payload.com"}
+
+    response = await original_shortlink(request, short_id, db)
+    # With relaxation, it must succeed (returns 302 and redirects to /continue)
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("/continue?token=")

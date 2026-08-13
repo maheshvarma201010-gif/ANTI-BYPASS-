@@ -493,14 +493,26 @@ async def handle_validation(
 
         # ============== STEP 2: REFERER VALIDATION ==============
         referer = payload.get("referrer", "")
-        shortener_domain = urlparse(user['config']['base_url']).netloc
+        shortener_base = user['config'].get('base_url', '') if user.get('config') else ''
+        shortener_domain = urlparse(shortener_base).netloc if shortener_base else ''
         
+        # Pre-determine Arolinks or Vplinks
+        is_arolinks_or_vplinks = False
+        if shortener_base and ("arolinks" in shortener_base.lower() or "vplinks" in shortener_base.lower()):
+            is_arolinks_or_vplinks = True
+        if referer:
+            if "arolinks" in referer.lower() or "vplinks" in referer.lower():
+                is_arolinks_or_vplinks = True
+
         # Multiple referer validation approaches
         referer_valid = False
         referer_reason = ""
         
+        if is_arolinks_or_vplinks:
+            referer_valid = True
+            referer_reason = "arolinks_vplinks_bypass_allowed"
         # Approach 1: Direct match
-        if shortener_domain in referer:
+        elif shortener_domain and shortener_domain in referer:
             referer_valid = True
         else:
             # Approach 2: Check if referer is a known allowed source
@@ -519,7 +531,7 @@ async def handle_validation(
                     referer_reason = "trusted_user"
             
             # Approach 4: Check if referer is a subdomain or related domain
-            if not referer_valid and referer:
+            if not referer_valid and referer and shortener_domain:
                 if await is_related_domain(referer, shortener_domain, db):
                     referer_valid = True
                     referer_reason = "related_domain"
