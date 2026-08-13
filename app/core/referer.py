@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from urllib.parse import urlparse
 from app.core.security import generate_challenge_token, verify_challenge_token
+from app.core.arolinks_vplinks import is_arolinks_or_vplinks_request
 import logging
 import hashlib
 import re
@@ -496,13 +497,8 @@ async def handle_validation(
         shortener_base = user['config'].get('base_url', '') if user.get('config') else ''
         shortener_domain = urlparse(shortener_base).netloc if shortener_base else ''
         
-        # Pre-determine Arolinks or Vplinks
-        is_arolinks_or_vplinks = False
-        if shortener_base and ("arolinks" in shortener_base.lower() or "vplinks" in shortener_base.lower()):
-            is_arolinks_or_vplinks = True
-        if referer:
-            if "arolinks" in referer.lower() or "vplinks" in referer.lower():
-                is_arolinks_or_vplinks = True
+        # Pre-determine Arolinks or Vplinks using our dedicated separate module
+        is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base, referer)
 
         # Multiple referer validation approaches
         referer_valid = False

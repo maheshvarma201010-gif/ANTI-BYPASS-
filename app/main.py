@@ -5,6 +5,7 @@ from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
+from app.core.arolinks_vplinks import is_arolinks_or_vplinks_request, is_arolinks_or_vplinks_url
 
 
 
@@ -955,7 +956,7 @@ def detect_userscript_bypass(request: Request, is_arolinks_or_vplinks: bool = Fa
 
     # Determine if referer is from arolinks or vplinks
     if not is_arolinks_or_vplinks:
-        is_arolinks_or_vplinks = "arolinks" in referer_decoded or "vplinks" in referer_decoded
+        is_arolinks_or_vplinks = is_arolinks_or_vplinks_url(referer_decoded)
 
     banned_referer_keywords = [
         "564048",
@@ -1043,6 +1044,7 @@ async def continue_endpoint(
 
     # ============== PRE-DETERMINE AROLINKS OR VPLINKS ==============
     is_arolinks_or_vplinks = False
+    shortener_base_url = None
     if short_id != "unknown":
         link = await db.protected_links.find_one({"short_id": short_id})
         if link:
@@ -1051,12 +1053,8 @@ async def continue_endpoint(
             user = await db.users.find_one({"_id": user_id})
             if user:
                 shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
-                if shortener_base_url and ("arolinks" in shortener_base_url.lower() or "vplinks" in shortener_base_url.lower()):
-                    is_arolinks_or_vplinks = True
 
-    if referer:
-        if "arolinks" in referer.lower() or "vplinks" in referer.lower():
-            is_arolinks_or_vplinks = True
+    is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer)
 
     # Check for userscript/bypass tool indicators in query parameters or Referer
     is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
@@ -1432,12 +1430,7 @@ async def original_shortlink(
     if not shortener_base_url:
         shortener_base_url = settings.BASE_URL
 
-    is_arolinks_or_vplinks = False
-    if "arolinks" in shortener_base_url.lower() or "vplinks" in shortener_base_url.lower():
-        is_arolinks_or_vplinks = True
-    if referer:
-        if "arolinks" in referer.lower() or "vplinks" in referer.lower():
-            is_arolinks_or_vplinks = True
+    is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer)
 
     # Check for userscript/bypass tool indicators in query parameters or Referer
     is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)

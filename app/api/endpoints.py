@@ -51,10 +51,11 @@ async def create_protected_link(
             break
 
         # Check if the configured base_url points to our own service
+        parsed_request_url = urlparse(str(request.base_url))
         parsed_config_url = urlparse(shortener_config["base_url"])
         parsed_settings_url = urlparse(settings.BASE_URL)
 
-        if parsed_config_url.netloc.lower() == parsed_settings_url.netloc.lower():
+        if parsed_config_url.netloc.lower() in [parsed_settings_url.netloc.lower(), parsed_request_url.netloc.lower()]:
             # It points to us! Let's extract the next API key in the chain and resolve again
             try:
                 decrypted_next_api = decrypt_url(shortener_config["api_key"])
