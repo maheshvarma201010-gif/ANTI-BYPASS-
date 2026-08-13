@@ -103,28 +103,38 @@ BYPASS_DETECTED_TEMPLATE = """
         }
 
         .premium-card {
-            background: linear-gradient(135deg, rgba(15, 10, 25, 0.8) 0%, rgba(5, 2, 10, 0.95) 100%);
-            border: 1px solid rgba(239, 68, 68, 0.25);
+            background: linear-gradient(135deg, rgba(20, 10, 10, 0.85) 0%, rgba(5, 2, 3, 0.98) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.3);
             box-shadow:
                 0 40px 100px -30px rgba(0, 0, 0, 0.95),
-                0 0 50px -10px rgba(239, 68, 68, 0.15),
-                inset 0 1px 1px rgba(255, 255, 255, 0.03);
-            backdrop-filter: blur(25px);
-            border-radius: 28px;
-            padding: 48px;
+                0 0 60px -10px rgba(239, 68, 68, 0.2),
+                inset 0 1px 1px rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(30px);
+            border-radius: 32px;
+            padding: 56px 48px;
             text-align: center;
             position: relative;
             overflow: hidden;
+            transform: translateY(0);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s ease;
+        }
+
+        .premium-card:hover {
+            transform: translateY(-4px);
+            box-shadow:
+                0 50px 110px -25px rgba(0, 0, 0, 0.95),
+                0 0 70px -5px rgba(239, 68, 68, 0.25),
+                inset 0 1px 1px rgba(255, 255, 255, 0.08);
         }
 
         .card-glow {
             position: absolute;
             top: 0;
-            left: 20%;
-            width: 60%;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.6), transparent);
-            box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+            left: 10%;
+            width: 80%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.8), transparent);
+            box-shadow: 0 0 25px rgba(239, 68, 68, 0.6);
         }
 
         .shimmer {
@@ -332,42 +342,51 @@ GATEWAY_TEMPLATE = """
         }
 
         .premium-card {
-            background: linear-gradient(135deg, rgba(10, 15, 30, 0.8) 0%, rgba(3, 5, 20, 0.95) 100%);
-            border: 1px solid rgba(59, 130, 246, 0.25);
+            background: linear-gradient(135deg, rgba(10, 14, 26, 0.85) 0%, rgba(3, 5, 14, 0.98) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.3);
             box-shadow:
-                0 40px 100px -30px rgba(0, 0, 0, 0.9),
-                0 0 50px -10px rgba(59, 130, 246, 0.15),
-                inset 0 1px 1px rgba(255, 255, 255, 0.04);
-            backdrop-filter: blur(30px);
-            border-radius: 28px;
-            padding: 48px;
+                0 40px 100px -30px rgba(0, 0, 0, 0.95),
+                0 0 50px -10px rgba(59, 130, 246, 0.2),
+                inset 0 1px 1px rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(35px);
+            border-radius: 32px;
+            padding: 56px 48px;
             text-align: center;
             position: relative;
             overflow: hidden;
-            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateY(0);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s ease, border-color 0.4s ease;
+        }
+
+        .premium-card:hover {
+            transform: translateY(-4px);
+            box-shadow:
+                0 50px 110px -25px rgba(0, 0, 0, 0.95),
+                0 0 65px -5px rgba(59, 130, 246, 0.25),
+                inset 0 1px 1px rgba(255, 255, 255, 0.08);
         }
 
         .premium-card.error-state {
-            border-color: rgba(239, 68, 68, 0.4);
+            border-color: rgba(239, 68, 68, 0.45);
             box-shadow:
-                0 40px 100px -30px rgba(0, 0, 0, 0.9),
-                0 0 60px -10px rgba(239, 68, 68, 0.25),
-                inset 0 1px 1px rgba(255, 255, 255, 0.04);
+                0 40px 100px -30px rgba(0, 0, 0, 0.95),
+                0 0 65px -10px rgba(239, 68, 68, 0.3),
+                inset 0 1px 1px rgba(255, 255, 255, 0.05);
         }
 
         .card-glow {
             position: absolute;
             top: 0;
-            left: 20%;
-            width: 60%;
+            left: 10%;
+            width: 80%;
             height: 3px;
-            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.7), transparent);
+            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.8), transparent);
             box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
             transition: all 0.5s ease;
         }
 
         .premium-card.error-state .card-glow {
-            background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.7), transparent);
+            background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.8), transparent);
             box-shadow: 0 0 25px rgba(239, 68, 68, 0.6);
         }
 
@@ -1045,6 +1064,7 @@ async def continue_endpoint(
     # ============== PRE-DETERMINE AROLINKS OR VPLINKS ==============
     is_arolinks_or_vplinks = False
     shortener_base_url = None
+    user_shorteners = None
     if short_id != "unknown":
         link = await db.protected_links.find_one({"short_id": short_id})
         if link:
@@ -1053,8 +1073,9 @@ async def continue_endpoint(
             user = await db.users.find_one({"_id": user_id})
             if user:
                 shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+                user_shorteners = user.get("shorteners", [])
 
-    is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer)
+    is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer, user_shorteners)
 
     # Check for userscript/bypass tool indicators using our specialized detectors
     if is_arolinks_or_vplinks:
@@ -1433,7 +1454,7 @@ async def original_shortlink(
     if not shortener_base_url:
         shortener_base_url = settings.BASE_URL
 
-    is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer)
+    is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer, user.get("shorteners", []) if user else None)
 
     # Check for userscript/bypass tool indicators using our specialized detectors
     if is_arolinks_or_vplinks:

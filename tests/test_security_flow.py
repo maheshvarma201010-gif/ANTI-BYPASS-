@@ -926,3 +926,58 @@ async def test_arolinks_vplinks_relaxation():
     # With relaxation, it must succeed (returns 302 and redirects to /continue)
     assert response.status_code == 302
     assert response.headers["location"].startswith("/continue?token=")
+
+
+@pytest.mark.asyncio
+async def test_arolinks_vplinks_user_shorteners_relaxation():
+    # Test that arolinks relaxation is active when a user has connected shorteners,
+    # even if shortener_base_url is generic (like Render url) and Referer is empty.
+    db = MagicMock()
+    db.protected_links = AsyncMock()
+    db.users = AsyncMock()
+    db.sessions = AsyncMock()
+    db.allowed_referers = MagicMock()
+    db.allowed_referers.find_one = AsyncMock(return_value=None)
+    db.validation_events = MagicMock()
+    db.validation_events.find_one = AsyncMock(return_value=None)
+    db.ip_whitelist = MagicMock()
+    db.ip_whitelist.find_one = AsyncMock(return_value=None)
+    db.sessions = AsyncMock()
+
+    user_id = ObjectId()
+    short_id = "generic_short"
+
+    # Protected link uses render.com (generic) as its shortener base url
+    db.protected_links.find_one.return_value = {
+        "user_id": str(user_id),
+        "short_id": short_id,
+        "original_url": "https://example.com",
+        "shortener_base_url": "https://anti-bypass-1.onrender.com"
+    }
+    # User document contains Arolinks in shorteners list
+    db.users.find_one.return_value = {
+        "_id": user_id,
+        "shorteners": [
+            {
+                "name": "My Arolinks",
+                "base_url": "https://arolinks.co",
+                "abp_key": "abp_123"
+            }
+        ]
+    }
+
+    request = MagicMock(spec=Request)
+    request.client = MagicMock()
+    request.client.host = "8.8.8.8"
+    # Referer is stripped/empty
+    request.headers = {
+        "user-agent": "test-agent",
+        "referer": ""
+    }
+    # Query parameters contain absolute URL (usually blocked, but should be allowed with relaxation)
+    request.query_params = {"url": "https://some-target-payload.com"}
+
+    response = await original_shortlink(request, short_id, db)
+    # With user_shorteners relaxation, it must succeed (returns 302 and redirects to /continue)
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("/continue?token=")

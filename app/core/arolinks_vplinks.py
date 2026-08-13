@@ -6,14 +6,24 @@ def is_arolinks_or_vplinks_url(url_str: str) -> bool:
     if not url_str:
         return False
     url_lower = url_str.lower()
-    return "arolinks" in url_lower or "vplinks" in url_lower
+    return (
+        "arolink" in url_lower or
+        "vplink" in url_lower or
+        "arolinks" in url_lower or
+        "vplinks" in url_lower
+    )
 
-def is_arolinks_or_vplinks_request(shortener_base_url: str = None, referer: str = None) -> bool:
+def is_arolinks_or_vplinks_request(shortener_base_url: str = None, referer: str = None, user_shorteners: list = None) -> bool:
     """Pre-determine if a request or link is connected to Arolinks or Vplinks"""
     if shortener_base_url and is_arolinks_or_vplinks_url(shortener_base_url):
         return True
     if referer and is_arolinks_or_vplinks_url(referer):
         return True
+    if user_shorteners:
+        for s in user_shorteners:
+            base_url = s.get("base_url")
+            if base_url and is_arolinks_or_vplinks_url(base_url):
+                return True
     return False
 
 def detect_arolinks_vplinks_bypass(request: Request) -> tuple[bool, str]:

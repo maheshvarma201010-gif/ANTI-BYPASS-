@@ -498,7 +498,7 @@ async def handle_validation(
         shortener_domain = urlparse(shortener_base).netloc if shortener_base else ''
         
         # Pre-determine Arolinks or Vplinks using our dedicated separate module
-        is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base, referer)
+        is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base, referer, user.get("shorteners", []) if user else None)
 
         # Multiple referer validation approaches
         referer_valid = False

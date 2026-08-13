@@ -1,15 +1,15 @@
 # 🛡️ Premium URL Shortener Anti-Bypass Protection System
 
-A state-of-the-art, high-performance, and extremely secure backend verification system designed to protect URL shortener redirects from bypass attempts. Built with **FastAPI**, **MongoDB (Motor)**, and **aiogram**, this system provides absolute security while maintaining a seamless user experience.
+A state-of-the-art, high-performance, and extremely secure backend verification gateway designed to protect URL shortener redirects from bypass attempts. Built with **FastAPI**, **MongoDB (Motor)**, and **aiogram**, this system provides robust, industry-grade security while delivering a beautiful, seamless, and premium user experience.
 
 ---
 
 ## ⚡ Redirection Redesign Model
 
-The system operates entirely on the server-side to guarantee that no client-side script, browser extension, or storage manipulation can bypass the target redirects.
+The system operates entirely on the server-side to guarantee that no client-side script, browser extension, or storage manipulation can bypass target redirects.
 
 ```
-Original Shortlink (e.g. https://arolinks.com/links?...)
+Original Shortlink (e.g., https://arolinks.com/links?...)
       ↓
 Backend Verification (Checks config & pre-determines platform on GET /{short_id})
       ↓
@@ -42,7 +42,7 @@ The backend implements comprehensive, industry-leading defenses against direct p
 ### 3. ⏱️ Short-Lived Expiration (Session TTL)
 - Continuation sessions are valid for a maximum of **300 seconds (5 minutes)**, and redirection tokens expire in **120 seconds**. Any requests made after expiration are securely rejected.
 
-### 4. 🔒 Server-Side ID Redirection Mapping (Hidden URLs)
+### 4. 🔒 Server-Side ID Redirection Hiding (No Decodes)
 - Target destination URLs are kept **100% hidden** on the client side. No base64-encoded strings or URL references are ever embedded in the gateway template.
 - REDIRECT is executed entirely on the server-side via `GET /redirect` using a unique, random redirection ID mapped in the server MongoDB collection, which redirects with an HTTP 302 response on verification success.
 
@@ -54,9 +54,18 @@ The backend implements comprehensive, industry-leading defenses against direct p
 
 ### 6. 🔗 Dynamic Referral Relaxation for Arolinks and Vplinks
 - Resolves all false-positive blocks during manual solve processes on popular networks.
-- Before running the core bypass detectors, the backend looks up the shortener configuration from MongoDB. If the link is created via **Arolinks** or **Vplinks** (or the Referer matches them), the system dynamically relaxes the restrictions:
-  - **Skips query parameter absolute URL checks:** Prevents blocks caused by arolinks/vplinks appending absolute URLs or tracking parameters to the destination query.
+- Before running the core bypass detectors, the backend looks up the shortener configuration from MongoDB. If the link belongs to **Arolinks** or **Vplinks** (or is linked to a user with Arolinks/Vplinks shorteners configured), the system dynamically relaxes the restrictions:
+  - **Skips query parameter absolute URL checks:** Prevents blocks caused by arolinks/vplinks appending absolute URLs or tracking parameters to the destination query on manual solves.
   - **Permits intermediate referral domains:** Since these networks route users through dynamic advertiser or publisher domains, the referer header is automatically validated to guarantee legitimate users are never shown "Bypass Detected".
+
+---
+
+## 🎨 Immersive & Stunning User Interface
+
+The system features two newly redesigned premium templates that blend modern web aesthetics with robust security mechanics:
+
+1. **Secure Transition Gateway:** A beautifully animated, high-tech glassmorphic card loader indicating connection status, integrity checks, and redirection progress with glowing, smooth-animating neon blue accents.
+2. **Access Blocked Screen:** A striking crimson red glassmorphism warning layout presented immediately when a bypass tool, userscript, or window manipulation is intercepted. It incorporates native script overrides and strict address bar query sanitization to block any bookmarklet hijack attempts.
 
 ---
 
