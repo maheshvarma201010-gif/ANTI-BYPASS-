@@ -5,7 +5,7 @@ from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
-from app.core.arolinks_vplinks import is_arolinks_or_vplinks_request, is_arolinks_or_vplinks_url
+from app.core.arolinks_vplinks import is_arolinks_or_vplinks_request, is_arolinks_or_vplinks_url, detect_arolinks_vplinks_bypass
 
 
 
@@ -1056,8 +1056,11 @@ async def continue_endpoint(
 
     is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer)
 
-    # Check for userscript/bypass tool indicators in query parameters or Referer
-    is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
+    # Check for userscript/bypass tool indicators using our specialized detectors
+    if is_arolinks_or_vplinks:
+        is_bypass, bypass_reason = detect_arolinks_vplinks_bypass(request)
+    else:
+        is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
 
     if is_bypass:
         if user_id:
@@ -1432,8 +1435,11 @@ async def original_shortlink(
 
     is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer)
 
-    # Check for userscript/bypass tool indicators in query parameters or Referer
-    is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
+    # Check for userscript/bypass tool indicators using our specialized detectors
+    if is_arolinks_or_vplinks:
+        is_bypass, bypass_reason = detect_arolinks_vplinks_bypass(request)
+    else:
+        is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
 
     if is_bypass:
         await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})

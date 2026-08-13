@@ -919,8 +919,8 @@ async def test_arolinks_vplinks_relaxation():
         "user-agent": "test-agent",
         "referer": "https://some-ad-publisher-domain.com" # Unknown/publisher domain
     }
-    # Query parameters contain absolute URL and "bypass" keyword which is usually blocked
-    request.query_params = {"bypass": "https://some-target-payload.com"}
+    # Query parameters contain absolute URL which is usually blocked, but NOT banned userscript keywords
+    request.query_params = {"url": "https://some-target-payload.com"}
 
     response = await original_shortlink(request, short_id, db)
     # With relaxation, it must succeed (returns 302 and redirects to /continue)
