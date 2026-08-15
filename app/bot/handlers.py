@@ -16,6 +16,7 @@ router = Router()
 class ConnectStates(StatesGroup):
     waiting_for_url = State()
     waiting_for_api_key = State()
+    waiting_for_manual_time = State()
 
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -91,12 +92,38 @@ async def cb_select_shortener(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("view_shortener:"))
 async def cb_view_shortener(callback: types.CallbackQuery):
     name = callback.data.split(":", 1)[1]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="1. NORMAL", callback_data=f"mode_normal:{name}"),
+            InlineKeyboardButton(text="2. MANUAL", callback_data=f"mode_manual:{name}")
+        ],
+        [InlineKeyboardButton(text="⬅️ Back", callback_data=f"sel_shortener:{name}")]
+    ])
+    await callback.message.answer(
+        f"⚙️ *Select Mode for {name}:*\n\n"
+        f"1. *NORMAL* - Standard verification flow\n"
+        f"2. *MANUAL* - Timer-based verification window",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("mode_normal:"))
+async def cb_mode_normal(callback: types.CallbackQuery):
+    name = callback.data.split(":", 1)[1]
     db = get_database()
-    user = await db.users.find_one({"telegram_id": str(callback.from_user.id)})
+    telegram_id = str(callback.from_user.id)
+    user = await db.users.find_one({"telegram_id": telegram_id})
     if not user:
         await callback.message.answer("❌ User not found.")
         await callback.answer()
         return
+
+    # Set mode to NORMAL
+    await db.users.update_one(
+        {"telegram_id": telegram_id, "shorteners.name": name},
+        {"$set": {"shorteners.$.mode": "NORMAL"}}
+    )
 
     shortener = None
     for s in user.get("shorteners", []):
@@ -114,8 +141,9 @@ async def cb_view_shortener(callback: types.CallbackQuery):
     abp_key = shortener.get("abp_key")
 
     await callback.message.answer(
-        f"ℹ️ *Shortener Config Details:*\n\n"
+        f"✅ *NORMAL Mode Configured for {name}:*\n\n"
         f"• *Name:* `{name}`\n"
+        f"• *Mode:* NORMAL\n"
         f"• *Base URL:* {base_url}\n"
         f"• *ABP API Key:* `{abp_key}`\n"
         f"• *Original API Key:* `{original_api_key}`",
@@ -123,6 +151,78 @@ async def cb_view_shortener(callback: types.CallbackQuery):
         reply_markup=get_start_keyboard()
     )
     await callback.answer()
+
+@router.callback_query(F.data.startswith("mode_manual:"))
+async def cb_mode_manual(callback: types.CallbackQuery, state: FSMContext):
+    name = callback.data.split(":", 1)[1]
+    await state.update_data(shortener_name=name)
+    await state.set_state(ConnectStates.waiting_for_manual_time)
+    await callback.message.answer(
+        f"⏱️ *MANUAL Mode Setup for {name}:*\n\n"
+        f"Please enter the total time in seconds.\n"
+        f"Example: Enter `200` to set the verification window from 200 to 220 seconds."
+    )
+    await callback.answer()
+
+@router.message(ConnectStates.waiting_for_manual_time)
+async def process_manual_time(message: types.Message, state: FSMContext):
+    text = message.text.strip()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("❌ Invalid input. Please enter a positive integer for seconds (e.g., 200).")
+        return
+
+    total_seconds = int(text)
+    min_seconds = total_seconds
+    max_seconds = total_seconds + 20
+
+    data = await state.get_data()
+    name = data.get("shortener_name")
+
+    db = get_database()
+    telegram_id = str(message.from_user.id)
+    user = await db.users.find_one({"telegram_id": telegram_id})
+    if not user:
+        await message.answer("❌ User not found.")
+        await state.clear()
+        return
+
+    shortener = None
+    for s in user.get("shorteners", []):
+        if s.get("name") == name:
+            shortener = s
+            break
+
+    if not shortener:
+        await message.answer("❌ Shortener configuration not found.")
+        await state.clear()
+        return
+
+    manual_abp_key = shortener.get("manual_abp_key") or generate_api_key()
+
+    await db.users.update_one(
+        {"telegram_id": telegram_id, "shorteners.name": name},
+        {"$set": {
+            "shorteners.$.mode": "MANUAL",
+            "shorteners.$.manual_min_seconds": min_seconds,
+            "shorteners.$.manual_max_seconds": max_seconds,
+            "shorteners.$.manual_abp_key": manual_abp_key
+        }}
+    )
+
+    base_url = shortener.get("base_url")
+
+    await state.clear()
+    await message.answer(
+        f"✅ *MANUAL Mode Configured for {name}!*\n\n"
+        f"• *Mode:* MANUAL\n"
+        f"• *Base URL:* {base_url}\n"
+        f"• *Valid Verification Window:* {min_seconds}s - {max_seconds}s\n"
+        f"• *New MANUAL API Key:* `{manual_abp_key}`\n\n"
+        f"Use this MANUAL API Key in your bot. The verification timer starts when a user opens the shortlink.\n"
+        f"Verification will only succeed if completed between {min_seconds}s and {max_seconds}s.",
+        parse_mode="Markdown",
+        reply_markup=get_start_keyboard()
+    )
 
 @router.callback_query(F.data.startswith("delete_shortener:"))
 async def cb_delete_shortener(callback: types.CallbackQuery):

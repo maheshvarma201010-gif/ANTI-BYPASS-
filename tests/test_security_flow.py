@@ -1107,3 +1107,73 @@ async def test_security_algorithms_validation():
     blocked_resp = await redirect_endpoint(req, redirect_id, db)
     assert blocked_resp.status_code == 302
     assert blocked_resp.headers["location"] == "/blocked"
+
+
+@pytest.mark.asyncio
+async def test_manual_mode_timer_verification_window():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    redirect_id = "manual_redir_123"
+    target_url = "https://target-destination.com"
+
+    # 1. Test verification TOO EARLY (< min_seconds, e.g. 50s elapsed when min=200s, max=220s)
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": target_url,
+        "created_at": time.time(),
+        "consumed": False,
+        "mode": "MANUAL",
+        "manual_min_seconds": 200,
+        "manual_max_seconds": 220,
+        "session_start_time": time.time() - 50  # Only 50 seconds elapsed
+    }
+
+    req = MagicMock(spec=Request)
+    req.client = MagicMock()
+    req.client.host = "1.2.3.4"
+    req.headers = {}
+    req.query_params = {}
+
+    early_resp = await redirect_endpoint(req, redirect_id, db)
+    assert early_resp.status_code == 302
+    assert early_resp.headers["location"] == "/blocked"
+
+    # 2. Test verification TOO LATE (> max_seconds, e.g. 230s elapsed when min=200s, max=220s)
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": target_url,
+        "created_at": time.time(),
+        "consumed": False,
+        "mode": "MANUAL",
+        "manual_min_seconds": 200,
+        "manual_max_seconds": 220,
+        "session_start_time": time.time() - 230  # 230 seconds elapsed
+    }
+
+    late_resp = await redirect_endpoint(req, redirect_id, db)
+    assert late_resp.status_code == 302
+    assert late_resp.headers["location"] == "/blocked"
+
+    # 3. Test verification WITHIN WINDOW (205s elapsed when min=200s, max=220s)
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": target_url,
+        "created_at": time.time(),
+        "consumed": False,
+        "mode": "MANUAL",
+        "manual_min_seconds": 200,
+        "manual_max_seconds": 220,
+        "session_start_time": time.time() - 205  # 205 seconds elapsed (VALID!)
+    }
+    update_res = MagicMock()
+    update_res.modified_count = 1
+    db.redirects.update_one.return_value = update_res
+
+    valid_resp = await redirect_endpoint(req, redirect_id, db)
+    assert valid_resp.status_code == 302
+    assert valid_resp.headers["location"] == target_url

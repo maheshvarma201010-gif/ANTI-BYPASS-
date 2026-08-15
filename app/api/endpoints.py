@@ -28,7 +28,8 @@ async def create_protected_link(
         found_user = await db.users.find_one({
             "$or": [
                 {"api_key": current_api},
-                {"shorteners.abp_key": current_api}
+                {"shorteners.abp_key": current_api},
+                {"shorteners.manual_abp_key": current_api}
             ]
         })
         if not found_user:
@@ -40,10 +41,14 @@ async def create_protected_link(
             shortener_config = user.get("config")
         else:
             for s in user.get("shorteners", []):
-                if s.get("abp_key") == current_api:
+                if s.get("abp_key") == current_api or s.get("manual_abp_key") == current_api:
+                    is_manual = (s.get("manual_abp_key") == current_api)
                     shortener_config = {
                         "base_url": s.get("base_url"),
-                        "api_key": s.get("api_key")
+                        "api_key": s.get("api_key"),
+                        "mode": "MANUAL" if is_manual else s.get("mode", "NORMAL"),
+                        "manual_min_seconds": s.get("manual_min_seconds"),
+                        "manual_max_seconds": s.get("manual_max_seconds")
                     }
                     break
 
@@ -74,10 +79,14 @@ async def create_protected_link(
             final_shortener_config = user.get("config")
         else:
             for s in user.get("shorteners", []):
-                if s.get("abp_key") == api:
+                if s.get("abp_key") == api or s.get("manual_abp_key") == api:
+                    is_manual = (s.get("manual_abp_key") == api)
                     final_shortener_config = {
                         "base_url": s.get("base_url"),
-                        "api_key": s.get("api_key")
+                        "api_key": s.get("api_key"),
+                        "mode": "MANUAL" if is_manual else s.get("mode", "NORMAL"),
+                        "manual_min_seconds": s.get("manual_min_seconds"),
+                        "manual_max_seconds": s.get("manual_max_seconds")
                     }
                     break
 
@@ -98,7 +107,10 @@ async def create_protected_link(
         "short_id": short_id,
         "original_url": url,
         "shortener_base_url": shortener_base,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.utcnow(),
+        "mode": final_shortener_config.get("mode", "NORMAL"),
+        "manual_min_seconds": final_shortener_config.get("manual_min_seconds"),
+        "manual_max_seconds": final_shortener_config.get("manual_max_seconds")
     }
     await db.protected_links.insert_one(protected_link)
 
