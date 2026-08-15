@@ -616,8 +616,8 @@ GATEWAY_TEMPLATE = """
             const TAB_TOKEN = "{tab_token}";
             const steps = [
                 { percent: 20, text: "Analyzing headers..." },
-                { percent: 45, text: "⚙️ Advanced Algorithms — Detects smart bypassers" },
-                { percent: 75, text: "📊 Live Analytics — Monitor performance in real time" },
+                { percent: 45, text: "Validating security protocol..." },
+                { percent: 75, text: "Establishing secure path..." },
                 { percent: 90, text: "Configuring session environment..." },
                 { percent: 100, text: "Connection verified" }
             ];

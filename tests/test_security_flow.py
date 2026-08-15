@@ -424,8 +424,8 @@ async def test_continue_endpoint_browser_html():
     assert response.status_code == 200
     body_decoded = response.body.decode()
     assert "Securing Connection..." in body_decoded
-    assert "Advanced Algorithms — Detects smart bypassers" in body_decoded
-    assert "Live Analytics — Monitor performance in real time" in body_decoded
+    assert "Validating security protocol..." in body_decoded
+    assert "Establishing secure path..." in body_decoded
     assert "detectUserscriptGlobals" in body_decoded
     assert "isGenuineChrome" not in body_decoded
     assert "visibilitychange" not in body_decoded
