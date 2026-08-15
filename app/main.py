@@ -615,9 +615,9 @@ GATEWAY_TEMPLATE = """
             const REDIRECT_ID = "{redirect_id}";
             const TAB_TOKEN = "{tab_token}";
             const steps = [
-                { percent: 15, text: "Analyzing headers..." },
-                { percent: 35, text: "Verifying browser engine..." },
-                { percent: 65, text: "Checking for unauthorized tools..." },
+                { percent: 20, text: "Analyzing headers..." },
+                { percent: 45, text: "⚙️ Advanced Algorithms — Detects smart bypassers" },
+                { percent: 75, text: "📊 Live Analytics — Monitor performance in real time" },
                 { percent: 90, text: "Configuring session environment..." },
                 { percent: 100, text: "Connection verified" }
             ];
@@ -712,76 +712,6 @@ GATEWAY_TEMPLATE = """
                 }
             } catch(e) {}
 
-            // 2.1 Tab and Browser Window switching protection
-            let onVisibilityChange;
-            try {
-                const handleHide = function() {
-                    if (!tamperingDetected) {
-                        reportViolation("Tab/Window switching detected");
-                        showError(
-                            "Bypass Attempt Blocked",
-                            "Security violation: Tab or window switching detected. This verification must be completed in the exact same tab and browser window without interruption."
-                        );
-                    }
-                };
-                onVisibilityChange = function() {
-                    if (document.visibilityState === 'hidden') {
-                        handleHide();
-                    }
-                };
-                document.addEventListener('visibilitychange', onVisibilityChange);
-            } catch(e) {}
-
-            // 1. Strict Google Chrome Only Browser Check
-            function isGenuineChrome() {
-                const ua = navigator.userAgent || '';
-                const vendor = navigator.vendor || '';
-
-                // Must have Chrome or CriOS (Chrome on iOS) or HeadlessChrome (for automated testing/verification)
-                const hasChrome = ua.includes('Chrome') || ua.includes('CriOS') || ua.includes('HeadlessChrome');
-                if (!hasChrome) return false;
-
-                // Must be Google Inc. or empty (iOS Chrome vendor is empty)
-                const isGoogle = vendor === 'Google Inc.' || vendor === '';
-                if (!isGoogle) return false;
-
-                // Brave detection via navigator.brave api
-                if (navigator.brave && typeof navigator.brave.isBrave === 'function') return false;
-
-                // Block any other browsers, custom user-agents, webviews, and 100+ known browser apps
-                const bannedSubstrings = [
-                    'Brave', 'Edg', 'Edge', 'OPR', 'Opera', 'Kiwi', 'Mises', 'Vivaldi',
-                    'YaBrowser', 'CocCoc', 'SamsungBrowser', 'UCBrowser', 'Firefox', 'FxiOS',
-                    'AlohaBrowser', 'Mint Browser', 'Soul Browser', 'Puffin', 'Dolphin',
-                    'Maxthon', 'Avast', 'AVG', 'Baidu', 'QQBrowser', 'Sogou', 'LieBao',
-                    'TorBrowser', 'DuckDuckGo', 'Focus', 'Klar', 'Viasat', 'Phoenix',
-                    'Cake', 'Ghostery', 'Adblock', 'Waterfox', 'PaleMoon', 'Basilisk',
-                    'IceWeasel', 'Midori', 'Epiphany', 'Konqueror', 'Chromium'
-                ];
-
-                const uaLower = ua.toLowerCase();
-                for (let i = 0; i < bannedSubstrings.length; i++) {
-                    if (uaLower.includes(bannedSubstrings[i].toLowerCase())) {
-                        return false;
-                    }
-                }
-
-                // Chrome on desktop/Android has window.chrome. CriOS on iOS does not.
-                if (!window.chrome && !ua.includes('CriOS') && !ua.includes('HeadlessChrome')) {
-                    return false;
-                }
-
-                return true;
-            }
-
-            if (!isGenuineChrome()) {
-                showError(
-                    "Unsupported Browser Detected",
-                    "To maintain high security and prevent unauthorized bypass attempts, this connection is strictly restricted to the official Google Chrome browser. Other browsers (including Brave, Kiwi, Mises, Edge, Opera, Firefox, etc.) are blocked. Please copy this link and open it in Google Chrome."
-                );
-                return;
-            }
-
             // 2. Tampermonkey & Userscript Detection
             function detectUserscriptGlobals() {
                 // Check common script manager globals and typical userscript indicators
@@ -858,9 +788,6 @@ GATEWAY_TEMPLATE = """
 
                         nativeSetTimeout(() => {
                             if (!tamperingDetected) {
-                                try {
-                                    document.removeEventListener('visibilitychange', onVisibilityChange);
-                                } catch(e) {}
                                 const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
                                 nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken));
                             }
