@@ -1177,3 +1177,20 @@ async def test_manual_mode_timer_verification_window():
     valid_resp = await redirect_endpoint(req, redirect_id, db)
     assert valid_resp.status_code == 302
     assert valid_resp.headers["location"] == target_url
+
+    # 4. Test custom user-defined window (e.g. min=100s, max=150s)
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": target_url,
+        "created_at": time.time(),
+        "consumed": False,
+        "mode": "MANUAL",
+        "manual_min_seconds": 100,
+        "manual_max_seconds": 150,
+        "session_start_time": time.time() - 120  # 120 seconds elapsed (VALID for 100-150s window!)
+    }
+
+    custom_resp = await redirect_endpoint(req, redirect_id, db)
+    assert custom_resp.status_code == 302
+    assert custom_resp.headers["location"] == target_url

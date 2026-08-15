@@ -16,7 +16,8 @@ router = Router()
 class ConnectStates(StatesGroup):
     waiting_for_url = State()
     waiting_for_api_key = State()
-    waiting_for_manual_time = State()
+    waiting_for_manual_start_time = State()
+    waiting_for_manual_end_time = State()
 
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -156,26 +157,44 @@ async def cb_mode_normal(callback: types.CallbackQuery):
 async def cb_mode_manual(callback: types.CallbackQuery, state: FSMContext):
     name = callback.data.split(":", 1)[1]
     await state.update_data(shortener_name=name)
-    await state.set_state(ConnectStates.waiting_for_manual_time)
+    await state.set_state(ConnectStates.waiting_for_manual_start_time)
     await callback.message.answer(
         f"⏱️ *MANUAL Mode Setup for {name}:*\n\n"
-        f"Please enter the total time in seconds.\n"
-        f"Example: Enter `200` to set the verification window from 200 to 220 seconds."
+        f"Step 1: Enter the start time in seconds.\n"
+        f"Example: Enter `200` for 200 seconds."
     )
     await callback.answer()
 
-@router.message(ConnectStates.waiting_for_manual_time)
-async def process_manual_time(message: types.Message, state: FSMContext):
+@router.message(ConnectStates.waiting_for_manual_start_time)
+async def process_manual_start_time(message: types.Message, state: FSMContext):
     text = message.text.strip()
-    if not text.isdigit() or int(text) <= 0:
-        await message.answer("❌ Invalid input. Please enter a positive integer for seconds (e.g., 200).")
+    if not text.isdigit() or int(text) < 0:
+        await message.answer("❌ Invalid input. Please enter a valid number of seconds (e.g., 200).")
         return
 
-    total_seconds = int(text)
-    min_seconds = total_seconds
-    max_seconds = total_seconds + 20
+    start_seconds = int(text)
+    await state.update_data(manual_start_seconds=start_seconds)
+    await state.set_state(ConnectStates.waiting_for_manual_end_time)
+    await message.answer(
+        f"Step 2: Enter the end time in seconds.\n"
+        f"Example: Enter `220` or any end time greater than or equal to {start_seconds} seconds."
+    )
 
+@router.message(ConnectStates.waiting_for_manual_end_time)
+async def process_manual_end_time(message: types.Message, state: FSMContext):
+    text = message.text.strip()
+    if not text.isdigit() or int(text) < 0:
+        await message.answer("❌ Invalid input. Please enter a valid number of seconds (e.g., 220).")
+        return
+
+    end_seconds = int(text)
     data = await state.get_data()
+    start_seconds = data.get("manual_start_seconds", 0)
+
+    if end_seconds < start_seconds:
+        await message.answer(f"❌ End time ({end_seconds}s) cannot be less than start time ({start_seconds}s). Please enter an end time >= {start_seconds}s.")
+        return
+
     name = data.get("shortener_name")
 
     db = get_database()
@@ -203,8 +222,8 @@ async def process_manual_time(message: types.Message, state: FSMContext):
         {"telegram_id": telegram_id, "shorteners.name": name},
         {"$set": {
             "shorteners.$.mode": "MANUAL",
-            "shorteners.$.manual_min_seconds": min_seconds,
-            "shorteners.$.manual_max_seconds": max_seconds,
+            "shorteners.$.manual_min_seconds": start_seconds,
+            "shorteners.$.manual_max_seconds": end_seconds,
             "shorteners.$.manual_abp_key": manual_abp_key
         }}
     )
@@ -216,10 +235,10 @@ async def process_manual_time(message: types.Message, state: FSMContext):
         f"✅ *MANUAL Mode Configured for {name}!*\n\n"
         f"• *Mode:* MANUAL\n"
         f"• *Base URL:* {base_url}\n"
-        f"• *Valid Verification Window:* {min_seconds}s - {max_seconds}s\n"
+        f"• *Valid Verification Window:* {start_seconds}s - {end_seconds}s\n"
         f"• *New MANUAL API Key:* `{manual_abp_key}`\n\n"
         f"Use this MANUAL API Key in your bot. The verification timer starts when a user opens the shortlink.\n"
-        f"Verification will only succeed if completed between {min_seconds}s and {max_seconds}s.",
+        f"Verification will only succeed if completed between {start_seconds}s and {end_seconds}s.",
         parse_mode="Markdown",
         reply_markup=get_start_keyboard()
     )
