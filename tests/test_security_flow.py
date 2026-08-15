@@ -981,3 +981,129 @@ async def test_arolinks_vplinks_user_shorteners_relaxation():
     # With user_shorteners relaxation, it must succeed (returns 302 and redirects to /continue)
     assert response.status_code == 302
     assert response.headers["location"].startswith("/continue?token=")
+
+
+@pytest.mark.asyncio
+async def test_arolinks_vplinks_tab_switch_and_browser_exemption():
+    from app.main import redirect_endpoint, redirect_post_endpoint, continue_endpoint
+    db = MagicMock()
+    db.sessions = AsyncMock()
+    db.users = AsyncMock()
+    db.redirects = AsyncMock()
+    db.redirects.insert_one = AsyncMock()
+
+    # 1. Test gateway template rendering for AroLinks
+    continue_request = MagicMock(spec=Request)
+    continue_request.client = MagicMock()
+    continue_request.client.host = "1.2.3.4"
+    continue_request.headers = {
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/115.0", # Non-Chrome browser!
+        "referer": "https://arolinks.com",
+        "accept": "text/html"
+    }
+    continue_request.cookies = {"session_id": "arolinks_session_cookie"}
+
+    user_id = ObjectId()
+    db.sessions.find_one.return_value = {
+        "_id": ObjectId(),
+        "session_id": "arolinks_session_cookie",
+        "token": "arolinks_token",
+        "user_id": str(user_id),
+        "short_id": "aro_short",
+        "original_url": "https://target-destination.com",
+        "client_ip": "1.2.3.4",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/115.0",
+        "created_at": time.time(),
+        "consumed": False,
+        "is_arolinks_or_vplinks": True
+    }
+
+    db.protected_links = AsyncMock()
+    db.protected_links.find_one.return_value = {
+        "short_id": "aro_short",
+        "user_id": str(user_id),
+        "shortener_base_url": "https://arolinks.com"
+    }
+    db.users.find_one.return_value = {
+        "_id": user_id,
+        "config": {"base_url": "https://arolinks.com"}
+    }
+
+    resp = await continue_endpoint(continue_request, "arolinks_token", db)
+    assert resp.status_code == 200
+    html_body = resp.body.decode()
+    assert 'const IS_AROLINKS_OR_VPLINKS = "true" === "true";' in html_body
+
+    # 2. Test GET /redirect ignores tab token mismatch for AroLinks/VPLinks
+    redirect_id = "aro_redir_123"
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": "https://target-destination.com",
+        "created_at": time.time(),
+        "consumed": False,
+        "tab_token": "expected_tab_abc",
+        "is_arolinks_or_vplinks": True
+    }
+    update_res = MagicMock()
+    update_res.modified_count = 1
+    db.redirects.update_one.return_value = update_res
+
+    get_redir_req = MagicMock(spec=Request)
+    get_redir_req.client = MagicMock()
+    get_redir_req.client.host = "1.2.3.4"
+    get_redir_req.headers = {}
+    get_redir_req.query_params = {"tab": "WRONG_OR_MISMATCHED_TAB"}
+
+    redir_resp = await redirect_endpoint(get_redir_req, redirect_id, db)
+    assert redir_resp.status_code == 302
+    assert redir_resp.headers["location"] == "https://target-destination.com"
+
+    # 3. Test POST /api/verify-redirect ignores tab token mismatch for AroLinks/VPLinks
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": "https://target-destination.com",
+        "created_at": time.time(),
+        "consumed": False,
+        "tab_token": "expected_tab_abc",
+        "is_arolinks_or_vplinks": True
+    }
+
+    post_req = MagicMock(spec=Request)
+    post_req.client = MagicMock()
+    post_req.client.host = "1.2.3.4"
+    post_req.headers = {}
+    body = {"id": redirect_id, "tab": "MISMATCHED_TAB"}
+
+    post_resp = await redirect_post_endpoint(post_req, body, db)
+    assert post_resp["status"] == "success"
+    assert post_resp["destination"] == "https://target-destination.com"
+
+
+@pytest.mark.asyncio
+async def test_security_algorithms_validation():
+    from app.main import redirect_endpoint
+    db = MagicMock()
+    db.redirects = AsyncMock()
+
+    # Test Nonce mismatch check
+    redirect_id = "nonce_redir_456"
+    db.redirects.find_one.return_value = {
+        "_id": ObjectId(),
+        "redirect_id": redirect_id,
+        "target_url": "https://target-destination.com",
+        "created_at": time.time(),
+        "consumed": False,
+        "nonce": "correct_nonce_789"
+    }
+
+    req = MagicMock(spec=Request)
+    req.client = MagicMock()
+    req.client.host = "1.2.3.4"
+    req.headers = {}
+    req.query_params = {"nonce": "WRONG_NONCE"}
+
+    blocked_resp = await redirect_endpoint(req, redirect_id, db)
+    assert blocked_resp.status_code == 302
+    assert blocked_resp.headers["location"] == "/blocked"

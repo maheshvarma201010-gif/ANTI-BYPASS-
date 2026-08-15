@@ -28,40 +28,33 @@ def is_arolinks_or_vplinks_request(shortener_base_url: str = None, referer: str 
 
 def detect_arolinks_vplinks_bypass(request: Request) -> tuple[bool, str]:
     """
-    Rigorously detect userscript bypassers for Arolinks and Vplinks.
-    Allows absolute URLs in query parameters (which are normal for manual redirections),
-    but strictly blocks known bypasser keywords, script inject indicators, and tamper patterns.
+    Rigorously detect userscript bypassers for Arolinks and Vplinks without
+    falsely flagging legitimate user redirections.
+    Allows absolute URLs and standard query parameters, but blocks explicit userscript
+    script files (e.g. .user.js) and script managers in Referer.
     """
     referer = request.headers.get("referer", "")
     referer_decoded = unquote(referer).lower()
 
-    # Banned keywords that indicate a bypasser
-    banned_keywords = [
+    # Banned userscript indicators (specific to script files and userscript managers)
+    banned_referer_keywords = [
         "564048",
-        "greasyfork",
+        "greasyfork.org/scripts",
         "tampermonkey",
         "stealth final",
-        "github.com",
-        "nicktrick",
-        "smart nicktrick"
+        ".user.js"
     ]
 
-    # Check Referer for banned keywords
-    for kw in banned_keywords:
+    for kw in banned_referer_keywords:
         if kw in referer_decoded:
             return True, f"Banned userscript pattern '{kw}' detected in Arolinks/Vplinks Referer"
 
-    # Check query parameters for banned keywords (excluding absolute URLs)
+    # Check query parameters for explicit userscript URLs or script installer patterns
     for k, v in request.query_params.items():
         k_dec = unquote(k).lower()
         v_dec = unquote(v).lower()
 
-        for kw in banned_keywords:
-            if kw in k_dec or kw in v_dec:
-                return True, f"Banned userscript pattern '{kw}' detected in Arolinks/Vplinks query parameters"
-
-        # Check for direct key containing "bypass" if it's not a legitimate key
-        if "bypass" in k_dec:
-            return True, "Banned query parameter 'bypass' detected in Arolinks/Vplinks"
+        if "greasyfork.org/scripts" in v_dec or ".user.js" in v_dec:
+            return True, f"Banned userscript pattern detected in Arolinks/Vplinks query parameters"
 
     return False, ""

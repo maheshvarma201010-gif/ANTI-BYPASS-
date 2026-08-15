@@ -614,6 +614,8 @@ GATEWAY_TEMPLATE = """
 
             const REDIRECT_ID = "{redirect_id}";
             const TAB_TOKEN = "{tab_token}";
+            const NONCE = "{nonce}";
+            const IS_AROLINKS_OR_VPLINKS = "{is_arolinks_or_vplinks}" === "true";
             const steps = [
                 { percent: 15, text: "Analyzing headers..." },
                 { percent: 35, text: "Verifying browser engine..." },
@@ -697,42 +699,46 @@ GATEWAY_TEMPLATE = """
                 nativeDefineProperty(document, 'writeln', { value: onTamperAttempt, writable: false, configurable: false });
             } catch(e) {}
 
-            // Enforce same-tab context isolation using sessionStorage
-            try {
-                const storageKey = 'tab_token_' + REDIRECT_ID;
-                if (!sessionStorage.getItem(storageKey)) {
-                    sessionStorage.setItem(storageKey, TAB_TOKEN);
-                } else if (sessionStorage.getItem(storageKey) !== TAB_TOKEN) {
-                    reportViolation("Tab context token mismatch in sessionStorage");
-                    showError(
-                        "Tab Security Violation",
-                        "Security violation: Redirection can only be completed in the exact same browser tab where the session started."
-                    );
-                    return;
-                }
-            } catch(e) {}
-
-            // 2.1 Tab and Browser Window switching protection
-            let onVisibilityChange;
-            try {
-                const handleHide = function() {
-                    if (!tamperingDetected) {
-                        reportViolation("Tab/Window switching detected");
+            // Enforce same-tab context isolation using sessionStorage (skipped for AroLinks/VPLinks)
+            if (!IS_AROLINKS_OR_VPLINKS) {
+                try {
+                    const storageKey = 'tab_token_' + REDIRECT_ID;
+                    if (!sessionStorage.getItem(storageKey)) {
+                        sessionStorage.setItem(storageKey, TAB_TOKEN);
+                    } else if (sessionStorage.getItem(storageKey) !== TAB_TOKEN) {
+                        reportViolation("Tab context token mismatch in sessionStorage");
                         showError(
-                            "Bypass Attempt Blocked",
-                            "Security violation: Tab or window switching detected. This verification must be completed in the exact same tab and browser window without interruption."
+                            "Tab Security Violation",
+                            "Security violation: Redirection can only be completed in the exact same browser tab where the session started."
                         );
+                        return;
                     }
-                };
-                onVisibilityChange = function() {
-                    if (document.visibilityState === 'hidden') {
-                        handleHide();
-                    }
-                };
-                document.addEventListener('visibilitychange', onVisibilityChange);
-            } catch(e) {}
+                } catch(e) {}
+            }
 
-            // 1. Strict Google Chrome Only Browser Check
+            // 2.1 Tab and Browser Window switching protection (skipped for AroLinks/VPLinks)
+            let onVisibilityChange;
+            if (!IS_AROLINKS_OR_VPLINKS) {
+                try {
+                    const handleHide = function() {
+                        if (!tamperingDetected) {
+                            reportViolation("Tab/Window switching detected");
+                            showError(
+                                "Bypass Attempt Blocked",
+                                "Security violation: Tab or window switching detected. This verification must be completed in the exact same tab and browser window without interruption."
+                            );
+                        }
+                    };
+                    onVisibilityChange = function() {
+                        if (document.visibilityState === 'hidden') {
+                            handleHide();
+                        }
+                    };
+                    document.addEventListener('visibilitychange', onVisibilityChange);
+                } catch(e) {}
+            }
+
+            // 1. Strict Google Chrome Only Browser Check (skipped for AroLinks/VPLinks)
             function isGenuineChrome() {
                 const ua = navigator.userAgent || '';
                 const vendor = navigator.vendor || '';
@@ -774,7 +780,7 @@ GATEWAY_TEMPLATE = """
                 return true;
             }
 
-            if (!isGenuineChrome()) {
+            if (!IS_AROLINKS_OR_VPLINKS && !isGenuineChrome()) {
                 showError(
                     "Unsupported Browser Detected",
                     "To maintain high security and prevent unauthorized bypass attempts, this connection is strictly restricted to the official Google Chrome browser. Other browsers (including Brave, Kiwi, Mises, Edge, Opera, Firefox, etc.) are blocked. Please copy this link and open it in Google Chrome."
@@ -862,7 +868,7 @@ GATEWAY_TEMPLATE = """
                                     document.removeEventListener('visibilitychange', onVisibilityChange);
                                 } catch(e) {}
                                 const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
-                                nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken));
+                                nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE));
                             }
                         }, 200);
                     } catch (e) {
@@ -1075,7 +1081,7 @@ async def continue_endpoint(
                 shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
                 user_shorteners = user.get("shorteners", [])
 
-    is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer, user_shorteners)
+    is_arolinks_or_vplinks = session.get("is_arolinks_or_vplinks", False) or is_arolinks_or_vplinks_request(shortener_base_url, referer, user_shorteners)
 
     # Check for userscript/bypass tool indicators using our specialized detectors
     if is_arolinks_or_vplinks:
@@ -1095,8 +1101,8 @@ async def continue_endpoint(
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
 
-    # Direct paste/share protection of the redirect URL: Referer must be present on internal continuation redirect
-    if not referer:
+    # Direct paste/share protection of the redirect URL: Referer must be present on internal continuation redirect (skipped for AroLinks/VPLinks)
+    if not referer and not is_arolinks_or_vplinks:
         return RedirectResponse(url="/blocked", status_code=302)
 
     user_id_str = session.get("user_id")
@@ -1105,16 +1111,16 @@ async def continue_endpoint(
 
     # Protection 2: Expired verification sessions
     # Tokens expire after 300 seconds for slow networks
-    if time.time() - session["created_at"] > 300:
+    if time.time() - session["created_at"] > 300 or time.time() > session.get("expires_at", session["created_at"] + 300):
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
         # INSTANTLY EXPIRE!
-        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Protection 3: Reusing an already completed/consumed verification session
-    if session.get("consumed", False):
+    if session.get("consumed", False) or session.get("status") in ["verified", "expired"]:
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Token already used", request, db)
@@ -1137,7 +1143,7 @@ async def continue_endpoint(
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, reason, request, db)
         # INSTANTLY EXPIRE!
-        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Consume/invalidate token atomically server-side to prevent TOCTOU race conditions / parallel replay
@@ -1165,6 +1171,7 @@ async def continue_endpoint(
         redirect_id = secrets.token_urlsafe(8)
         salt = secrets.token_urlsafe(16)
         tab_token = secrets.token_urlsafe(16)
+        gateway_nonce = secrets.token_urlsafe(16)
         normalized_ua = request.headers.get("user-agent", "").strip()
         client_ip = get_client_ip(request)
 
@@ -1176,19 +1183,29 @@ async def continue_endpoint(
             "redirect_id": redirect_id,
             "target_url": destination_url,
             "created_at": time.time(),
+            "expires_at": time.time() + 120,
             "consumed": False,
+            "status": "unused",
             "client_ip": client_ip,
             "session_hash": session_hash,
             "salt": salt,
             "user_agent": request.headers.get("user-agent", ""),
             "session_id": cookie_session_id or session.get("session_id"),
             "tab_token": tab_token,
+            "nonce": gateway_nonce,
             "user_id": str(user_id) if user_id else None,
-            "short_id": short_id
+            "short_id": short_id,
+            "is_arolinks_or_vplinks": is_arolinks_or_vplinks
         })
 
-        # Return our beautiful premium secure transition gateway page!
-        html_content = GATEWAY_TEMPLATE.replace("{redirect_id}", redirect_id).replace("{tab_token}", tab_token)
+        is_arolinks_str = "true" if is_arolinks_or_vplinks else "false"
+        html_content = (
+            GATEWAY_TEMPLATE
+            .replace("{redirect_id}", redirect_id)
+            .replace("{tab_token}", tab_token)
+            .replace("{nonce}", gateway_nonce)
+            .replace("{is_arolinks_or_vplinks}", is_arolinks_str)
+        )
         return HTMLResponse(content=html_content, status_code=200)
 
     # Redirect to the final destination
@@ -1207,11 +1224,18 @@ async def redirect_endpoint(
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Replay/duplicate protection
-    if redirect_doc.get("consumed", False):
+    if redirect_doc.get("consumed", False) or redirect_doc.get("status") in ["verified", "expired"]:
         return RedirectResponse(url="/blocked", status_code=302)
 
     # 120 seconds TTL check
-    if time.time() - redirect_doc["created_at"] > 120:
+    if time.time() - redirect_doc["created_at"] > 120 or time.time() > redirect_doc.get("expires_at", redirect_doc["created_at"] + 120):
+        await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # Challenge Nonce validation if nonce parameter was provided
+    expected_nonce = redirect_doc.get("nonce")
+    nonce_param = request.query_params.get("nonce")
+    if expected_nonce and nonce_param and expected_nonce != nonce_param:
         return RedirectResponse(url="/blocked", status_code=302)
 
     # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
@@ -1232,16 +1256,17 @@ async def redirect_endpoint(
     if expected_session_id and expected_session_id != cookie_session_id:
         return RedirectResponse(url="/blocked", status_code=302)
 
-    # Same-tab validation
-    expected_tab_token = redirect_doc.get("tab_token")
-    tab_param = request.query_params.get("tab")
-    if expected_tab_token and expected_tab_token != tab_param:
-        return RedirectResponse(url="/blocked", status_code=302)
+    # Same-tab validation (skipped for AroLinks/VPLinks)
+    if not redirect_doc.get("is_arolinks_or_vplinks", False):
+        expected_tab_token = redirect_doc.get("tab_token")
+        tab_param = request.query_params.get("tab")
+        if expected_tab_token and expected_tab_token != tab_param:
+            return RedirectResponse(url="/blocked", status_code=302)
 
-    # Atomically mark the redirect ID as consumed
+    # Atomically mark the redirect ID as consumed and verified
     result = await db.redirects.update_one(
         {"_id": redirect_doc["_id"], "consumed": False},
-        {"$set": {"consumed": True}}
+        {"$set": {"consumed": True, "status": "verified"}}
     )
     if result.modified_count == 0:
         return RedirectResponse(url="/blocked", status_code=302)
@@ -1324,11 +1349,18 @@ async def redirect_post_endpoint(
     if not redirect_doc:
         raise HTTPException(status_code=404, detail="Redirect not found")
 
-    if redirect_doc.get("consumed", False):
+    if redirect_doc.get("consumed", False) or redirect_doc.get("status") in ["verified", "expired"]:
         raise HTTPException(status_code=410, detail="Redirect already consumed")
 
-    if time.time() - redirect_doc["created_at"] > 120:
+    if time.time() - redirect_doc["created_at"] > 120 or time.time() > redirect_doc.get("expires_at", redirect_doc["created_at"] + 120):
+        await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         raise HTTPException(status_code=410, detail="Redirect expired")
+
+    # Challenge Nonce validation if nonce parameter was provided
+    expected_nonce = redirect_doc.get("nonce")
+    nonce_param = body.get("nonce")
+    if expected_nonce and nonce_param and expected_nonce != nonce_param:
+        raise HTTPException(status_code=403, detail="Nonce verification failed")
 
     # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
     session_hash = redirect_doc.get("session_hash")
@@ -1348,16 +1380,17 @@ async def redirect_post_endpoint(
     if expected_session_id and expected_session_id != cookie_session_id:
         raise HTTPException(status_code=403, detail="Session verification failed")
 
-    # Same-tab validation
-    expected_tab_token = redirect_doc.get("tab_token")
-    tab_param = body.get("tab")
-    if expected_tab_token and expected_tab_token != tab_param:
-        raise HTTPException(status_code=403, detail="Tab security violation")
+    # Same-tab validation (skipped for AroLinks/VPLinks)
+    if not redirect_doc.get("is_arolinks_or_vplinks", False):
+        expected_tab_token = redirect_doc.get("tab_token")
+        tab_param = body.get("tab")
+        if expected_tab_token and expected_tab_token != tab_param:
+            raise HTTPException(status_code=403, detail="Tab security violation")
 
-    # Atomically mark as consumed
+    # Atomically mark as consumed and verified
     result = await db.redirects.update_one(
         {"_id": redirect_doc["_id"], "consumed": False},
-        {"$set": {"consumed": True}}
+        {"$set": {"consumed": True, "status": "verified"}}
     )
     if result.modified_count == 0:
         raise HTTPException(status_code=410, detail="Redirect already consumed")
@@ -1520,19 +1553,24 @@ async def original_shortlink(
     # 2. Referer validated! Create a secure, short-lived server-side session.
     session_id = secrets.token_urlsafe(32)
     token = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(16)
     timestamp = time.time()
 
     session_doc = {
         "session_id": session_id,
         "token": token,
+        "nonce": nonce,
         "short_id": short_id,
         "original_url": link["original_url"],
         "user_id": str(user_id),
         "client_ip": client_ip,
         "user_agent": user_agent,
         "created_at": timestamp,
+        "expires_at": timestamp + 300,
+        "status": "unused",
         "verified": True,  # Already verified backend referer check
-        "consumed": False
+        "consumed": False,
+        "is_arolinks_or_vplinks": is_arolinks_or_vplinks
     }
 
     await db.sessions.insert_one(session_doc)
