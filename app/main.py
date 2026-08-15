@@ -845,42 +845,18 @@ GATEWAY_TEMPLATE = """
             });
             observer.observe(document, { childList: true, subtree: true });
 
-            // 4. Run verification steps and complete redirection
-            let currentStep = 0;
-            const fill = nativeGetElementById("fill-element");
-            const statusText = nativeGetElementById("status-text");
-
-            function nextStep() {
-                if (tamperingDetected) return;
-
-                if (currentStep < steps.length) {
-                    const step = steps[currentStep];
-                    if (fill) fill.style.width = step.percent + "%";
-                    if (statusText) statusText.innerText = step.text;
-                    currentStep++;
-
-                    const delay = currentStep === steps.length ? 400 : 300;
-                    nativeSetTimeout(nextStep, delay);
-                } else {
+            // 4. Run instant backend verification launch
+            try {
+                if (!tamperingDetected) {
                     try {
-                        if (statusText) statusText.innerText = "Redirecting...";
-
-                        nativeSetTimeout(() => {
-                            if (!tamperingDetected) {
-                                try {
-                                    document.removeEventListener('visibilitychange', onVisibilityChange);
-                                } catch(e) {}
-                                const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
-                                nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE));
-                            }
-                        }, 200);
-                    } catch (e) {
-                        showError("Verification Failure", "Redirection failed. Please reload the page.");
-                    }
+                        document.removeEventListener('visibilitychange', onVisibilityChange);
+                    } catch(e) {}
+                    const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
+                    nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE));
                 }
+            } catch (e) {
+                showError("Verification Failure", "Redirection failed. Please reload the page.");
             }
-
-            nativeSetTimeout(nextStep, 100);
         })();
     </script>
 </body>
