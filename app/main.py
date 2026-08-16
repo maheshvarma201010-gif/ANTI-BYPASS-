@@ -780,7 +780,8 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
         "bot", "crawler", "spider", "headless", "phantom", "selenium",
         "puppeteer", "playwright", "python", "curl", "wget", "go-http-client",
         "axios", "node-fetch", "urllib", "aiohttp", "httpx", "postman",
-        "insomnia", "bypass", "ddxbypass", "bypassbot"
+        "insomnia", "bypass", "ddxbypass", "bypassbot", "checker", "scraper",
+        "tampermonkey", "greasyfork", "violentmonkey", "script", "nicktrick"
     ]
 
     for kw in bot_keywords:
@@ -860,12 +861,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     from urllib.parse import unquote, urlparse
 
     raw_referer = request.headers.get("referer", "")
-    referer_dec1 = unquote(raw_referer).lower()
-    referer_dec2 = unquote(referer_dec1).lower()
+    referer_dec = unquote(unquote(raw_referer)).lower()
 
     raw_url = str(request.url)
-    url_dec1 = unquote(raw_url).lower()
-    url_dec2 = unquote(url_dec1).lower()
+    url_dec = unquote(unquote(raw_url)).lower()
 
     # Self-referential internal gateway route detection in Referer
     if raw_referer:
@@ -885,11 +884,12 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "564048",
         "greasyfork",
         "tampermonkey",
+        "violentmonkey",
         "stealth final",
         "smart nicktrick",
         "nicktrick redirect error",
         "top!==self",
-        "searchparams.get",
+        "searchparams",
         "document.write",
         "document.open",
         "ddxbypass",
@@ -897,9 +897,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     ]
 
     for kw in banned_keywords:
-        if kw in referer_dec2:
+        if kw in referer_dec:
             return True, f"Banned userscript pattern '{kw}' detected in Referer"
-        if kw in url_dec2:
+        if kw in url_dec:
             return True, f"Banned userscript pattern '{kw}' detected in Request URL"
 
     # Check query parameters specifically for nicktrick and userscript patterns
@@ -910,6 +910,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "smart nicktrick",
         "greasyfork",
         "tampermonkey",
+        "violentmonkey",
         "stealth final",
         "ddxbypass",
         "bypassbot"
