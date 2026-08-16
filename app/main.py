@@ -594,12 +594,12 @@ GATEWAY_TEMPLATE = """
             const nativeDefineProperty = Object.defineProperty;
             const nativeGetElementById = document.getElementById.bind(document);
 
-            // 1. Immediately destroy/remove current script from DOM to prevent scraping {encoded_url}
+            // Destroy/remove current script from DOM to prevent DOM scraping
             if (document.currentScript) {
                 try { document.currentScript.remove(); } catch(e) {}
             }
 
-            // Immediately strip any other query parameters and the hash fragment from the address bar to thwart bookmarklets
+            // Immediately strip query parameters or hash from address bar except token
             try {
                 const url = new URL(window.location.href);
                 const token = url.searchParams.get("token");
@@ -615,13 +615,6 @@ GATEWAY_TEMPLATE = """
             const REDIRECT_ID = "{redirect_id}";
             const TAB_TOKEN = "{tab_token}";
             const NONCE = "{nonce}";
-            const steps = [
-                { percent: 15, text: "Analyzing headers..." },
-                { percent: 35, text: "Verifying browser engine..." },
-                { percent: 65, text: "Checking for unauthorized tools..." },
-                { percent: 90, text: "Configuring session environment..." },
-                { percent: 100, text: "Connection verified" }
-            ];
 
             let tamperingDetected = false;
 
@@ -680,7 +673,7 @@ GATEWAY_TEMPLATE = """
                 } catch(e) {}
             }
 
-            // 2. Freeze and override document.write / document.open to stop bookmarklets / scripts overwriting the DOM
+            // Freeze and override document.write / document.open to stop bookmarklets / scripts overwriting the DOM
             try {
                 const onTamperAttempt = function() {
                     if (!tamperingDetected) {
@@ -692,7 +685,6 @@ GATEWAY_TEMPLATE = """
                     throw new Error("Security Sandbox: Document write/open is prohibited.");
                 };
 
-                // Apply frozen non-configurable properties
                 nativeDefineProperty(document, 'open', { value: onTamperAttempt, writable: false, configurable: false });
                 nativeDefineProperty(document, 'write', { value: onTamperAttempt, writable: false, configurable: false });
                 nativeDefineProperty(document, 'writeln', { value: onTamperAttempt, writable: false, configurable: false });
@@ -713,79 +705,8 @@ GATEWAY_TEMPLATE = """
                 }
             } catch(e) {}
 
-            // 2.1 Tab and Browser Window switching protection
-            let onVisibilityChange;
-            try {
-                const handleHide = function() {
-                    if (!tamperingDetected) {
-                        reportViolation("Tab/Window switching detected");
-                        showError(
-                            "Bypass Attempt Blocked",
-                            "Security violation: Tab or window switching detected. This verification must be completed in the exact same tab and browser window without interruption."
-                        );
-                    }
-                };
-                onVisibilityChange = function() {
-                    if (document.visibilityState === 'hidden') {
-                        handleHide();
-                    }
-                };
-                document.addEventListener('visibilitychange', onVisibilityChange);
-            } catch(e) {}
-
-            // 1. Strict Google Chrome Only Browser Check
-            function isGenuineChrome() {
-                const ua = navigator.userAgent || '';
-                const vendor = navigator.vendor || '';
-
-                // Must have Chrome or CriOS (Chrome on iOS) or HeadlessChrome (for automated testing/verification)
-                const hasChrome = ua.includes('Chrome') || ua.includes('CriOS') || ua.includes('HeadlessChrome');
-                if (!hasChrome) return false;
-
-                // Must be Google Inc. or empty (iOS Chrome vendor is empty)
-                const isGoogle = vendor === 'Google Inc.' || vendor === '';
-                if (!isGoogle) return false;
-
-                // Brave detection via navigator.brave api
-                if (navigator.brave && typeof navigator.brave.isBrave === 'function') return false;
-
-                // Block any other browsers, custom user-agents, webviews, and 100+ known browser apps
-                const bannedSubstrings = [
-                    'Brave', 'Edg', 'Edge', 'OPR', 'Opera', 'Kiwi', 'Mises', 'Vivaldi',
-                    'YaBrowser', 'CocCoc', 'SamsungBrowser', 'UCBrowser', 'Firefox', 'FxiOS',
-                    'AlohaBrowser', 'Mint Browser', 'Soul Browser', 'Puffin', 'Dolphin',
-                    'Maxthon', 'Avast', 'AVG', 'Baidu', 'QQBrowser', 'Sogou', 'LieBao',
-                    'TorBrowser', 'DuckDuckGo', 'Focus', 'Klar', 'Viasat', 'Phoenix',
-                    'Cake', 'Ghostery', 'Adblock', 'Waterfox', 'PaleMoon', 'Basilisk',
-                    'IceWeasel', 'Midori', 'Epiphany', 'Konqueror', 'Chromium'
-                ];
-
-                const uaLower = ua.toLowerCase();
-                for (let i = 0; i < bannedSubstrings.length; i++) {
-                    if (uaLower.includes(bannedSubstrings[i].toLowerCase())) {
-                        return false;
-                    }
-                }
-
-                // Chrome on desktop/Android has window.chrome. CriOS on iOS does not.
-                if (!window.chrome && !ua.includes('CriOS') && !ua.includes('HeadlessChrome')) {
-                    return false;
-                }
-
-                return true;
-            }
-
-            if (!isGenuineChrome()) {
-                showError(
-                    "Unsupported Browser Detected",
-                    "To maintain high security and prevent unauthorized bypass attempts, this connection is strictly restricted to the official Google Chrome browser. Other browsers (including Brave, Kiwi, Mises, Edge, Opera, Firefox, etc.) are blocked. Please copy this link and open it in Google Chrome."
-                );
-                return;
-            }
-
-            // 2. Tampermonkey & Userscript Detection
+            // Tampermonkey & Userscript Detection
             function detectUserscriptGlobals() {
-                // Check common script manager globals and typical userscript indicators
                 const detected = (typeof GM_info !== 'undefined') ||
                        (typeof GM !== 'undefined') ||
                        (window.GM_info) ||
@@ -806,43 +727,9 @@ GATEWAY_TEMPLATE = """
                 return;
             }
 
-            // 3. MutationObserver to catch Greasefork nicktrick script and other userscripts
-            const observer = new MutationObserver((mutations) => {
-                if (tamperingDetected) return;
-                mutations.forEach((mutation) => {
-                    if (mutation.addedNodes) {
-                        mutation.addedNodes.forEach((node) => {
-                            if (node.nodeType === 1) {
-                                const id = node.id || '';
-                                const html = node.innerHTML || '';
-                                const text = node.textContent || '';
-                                if (id === 'get-link-btn' ||
-                                    id === 'countdown' ||
-                                    id === 'progress' ||
-                                    html.includes('get-link-btn') ||
-                                    html.includes('countdown') ||
-                                    html.includes('nicktrick') ||
-                                    text.includes('Smart nicktrick') ||
-                                    text.includes('nicktrick')) {
-                                    node.remove();
-                                    showError(
-                                        "Bypass Tool Blocked",
-                                        "An active userscript bypass utility was detected attempting to intercept this redirect. All redirection privileges have been revoked."
-                                    );
-                                }
-                            }
-                        });
-                    }
-                });
-            });
-            observer.observe(document, { childList: true, subtree: true });
-
-            // 4. Run instant backend verification launch
+            // Run instant backend verification launch
             try {
                 if (!tamperingDetected) {
-                    try {
-                        document.removeEventListener('visibilitychange', onVisibilityChange);
-                    } catch(e) {}
                     const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
                     nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE));
                 }
@@ -955,21 +842,17 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     url_dec1 = unquote(raw_url).lower()
     url_dec2 = unquote(url_dec1).lower()
 
+    # Explicit userscript and bypass tool signatures only
     banned_keywords = [
         "564048",
         "greasyfork",
         "tampermonkey",
         "stealth final",
-        "github.com",
-        "nicktrick",
         "smart nicktrick",
-        "bypass",
-        "javascript:",
-        "strict-origin-when-cross-origin",
         "nicktrick redirect error"
     ]
 
-    # Check Referer and Request URL strings for banned keywords
+    # Check Referer and Request URL strings for explicit userscript patterns
     for kw in banned_keywords:
         if kw in referer_dec2:
             return True, f"Banned userscript pattern '{kw}' detected in Referer"
@@ -986,31 +869,23 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         except Exception:
             pass
 
-    # Check query parameters (both keys and values)
+    # Check query parameters specifically for explicit userscript scripts
     banned_query_keywords = [
         "564048",
         "smart nicktrick",
-        "nicktrick",
         "greasyfork",
         "tampermonkey",
-        "stealth final",
-        "bypass",
-        "javascript:",
-        "strict-origin-when-cross-origin"
+        "stealth final"
     ]
 
     for k, v in request.query_params.items():
         k_dec = unquote(unquote(k)).lower()
         v_dec = unquote(unquote(v)).lower()
 
-        # Check keys and values for banned keywords
+        # Check keys and values for explicit userscript keywords
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
                 return True, f"Banned userscript pattern '{kw}' detected in query parameters"
-
-        # Check for absolute URLs in parameter values to prevent nicktrick or deep nested redirects
-        if "http://" in v_dec or "https://" in v_dec or "://" in v_dec:
-            return True, "Absolute URL injection detected in query parameter"
 
     return False, ""
 
@@ -1031,7 +906,6 @@ async def continue_endpoint(
     db = Depends(get_database)
 ):
 
-
     # Retrieve session bound to token first so we can identify the link shortener
     session = await db.sessions.find_one({"token": token})
 
@@ -1049,7 +923,7 @@ async def continue_endpoint(
 
     referer = request.headers.get("referer", "")
 
-    # Check for userscript/bypass tool indicators
+    # Check for explicit userscript/bypass tool indicators
     is_bypass, bypass_reason = detect_userscript_bypass(request)
 
     if is_bypass:
@@ -1063,14 +937,6 @@ async def continue_endpoint(
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
-
-    # Direct paste/share protection of the redirect URL: Referer must be present on internal continuation redirect
-    if not referer:
-        return RedirectResponse(url="/blocked", status_code=302)
-
-    user_id_str = session.get("user_id")
-    user_id = ObjectId(user_id_str) if user_id_str else None
-    short_id = session.get("short_id", "unknown")
 
     # Protection 2: Expired verification sessions
     # Tokens expire after 300 seconds for slow networks
@@ -1385,16 +1251,12 @@ async def redirect_post_endpoint(
 def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
     """
     Compares the registrable "root" domain name of the incoming Referer
-    against the configured shortener domain, tolerant of:
-      - subdomains on either side (www., link., go., s1., publisher., etc.)
-      - alternate TLDs for the same brand (example.com vs example.co)
-      - multi-label TLDs (e.g. .co.in, .com.br)
+    against the configured shortener domain, tolerant of subdomains and alternate TLDs.
     """
     if not ref_netloc or not shortener_domain:
         return False
 
     def get_root_name(domain: str) -> str:
-        # Strip port if present (e.g. example.com:8443)
         domain = domain.split(":")[0]
         parts = [p for p in domain.split(".") if p]
 
@@ -1404,20 +1266,12 @@ def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
             "live", "club", "tech", "work"
         }
 
-        # Strip trailing TLD label(s) from the end of the domain.
-        # This correctly handles both single-label TLDs (.com) and
-        # stacked ones (.co.in, .com.br) without misreading a
-        # leading subdomain (go., link., s1., publisher., ...) as
-        # the actual brand/root name.
         while len(parts) > 1 and parts[-1] in common_tlds:
             parts = parts[:-1]
 
         if not parts:
             return domain
 
-        # The label immediately preceding the TLD is the true root
-        # (registrable) domain name, regardless of how many
-        # subdomain labels came before it.
         return parts[-1]
 
     shortener_root = get_root_name(shortener_domain).lower()
@@ -1426,14 +1280,9 @@ def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
     if not shortener_root or not ref_root:
         return False
 
-    # Exact root match (preferred) — e.g. "example" == "example"
     if shortener_root == ref_root:
         return True
 
-    # Fallback: containment check, but only against the *root* labels
-    # (not the full netloc/domain strings) to reduce false positives
-    # from unrelated domains that merely happen to contain the brand
-    # name as a substring somewhere in a subdomain.
     if shortener_root in ref_root or ref_root in shortener_root:
         return True
 
@@ -1446,7 +1295,6 @@ async def original_shortlink(
     short_id: str,
     db = Depends(get_database)
 ):
-
 
     # Health and special routes exceptions
     if short_id in ["health", "continue"]:
@@ -1466,11 +1314,7 @@ async def original_shortlink(
     user_agent = request.headers.get("user-agent", "")
     referer = request.headers.get("referer", "")
 
-    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
-    if not shortener_base_url:
-        shortener_base_url = settings.BASE_URL
-
-    # Check for userscript/bypass tool indicators
+    # Check for explicit userscript/bypass tool indicators
     is_bypass, bypass_reason = detect_userscript_bypass(request)
 
     if is_bypass:
@@ -1478,64 +1322,19 @@ async def original_shortlink(
         await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         return RedirectResponse(url="/blocked", status_code=302)
 
-    # ============== REFERER VALIDATION ==============
-    # Strictly validate referer: user must come from the original shortlink domain or connected shorteners
+    # ============== REFERER/ORIGIN LOGGING (SUPPORTING SIGNAL) ==============
+    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
     shortener_domain = urlparse(shortener_base_url).netloc.lower() if shortener_base_url else ""
-    parsed_base = urlparse(str(request.base_url))
-    base_netloc = parsed_base.netloc.lower()
 
-    referer_valid = False
-    referer_reason = ""
-
+    referer_signal = "missing"
     if referer:
         ref_netloc = urlparse(referer).netloc.lower()
-
-        if shortener_domain and (shortener_domain in ref_netloc or ref_netloc in shortener_domain or check_referer_root(ref_netloc, shortener_domain)):
-            referer_valid = True
-            referer_reason = "shortener_match"
-        elif base_netloc and (base_netloc in ref_netloc or ref_netloc in base_netloc):
-            referer_valid = True
-            referer_reason = "base_match"
+        if shortener_domain and (shortener_domain in ref_netloc or check_referer_root(ref_netloc, shortener_domain)):
+            referer_signal = "shortener_match"
         else:
-            # Check against any of user's connected shorteners
-            if user and user.get("shorteners"):
-                for s in user.get("shorteners", []):
-                    s_base = s.get("base_url")
-                    if s_base:
-                        s_domain = urlparse(s_base).netloc.lower()
-                        if s_domain and (s_domain in ref_netloc or ref_netloc in s_domain or check_referer_root(ref_netloc, s_domain)):
-                            referer_valid = True
-                            referer_reason = "user_shortener_match"
-                            break
+            referer_signal = "external_or_cross_origin"
 
-            if not referer_valid:
-                if await is_allowed_referer(referer, db):
-                    referer_valid = True
-                    referer_reason = "allowed_referer"
-                elif await is_related_domain(referer, shortener_domain, db):
-                    referer_valid = True
-                    referer_reason = "related_domain"
-
-    if not referer_valid:
-        if await is_whitelisted_user(user_id, db):
-            referer_valid = True
-            referer_reason = "whitelisted"
-        elif await is_development_environment(client_ip, user_agent):
-            referer_valid = True
-            referer_reason = "development"
-
-    if not referer_valid:
-        # Update user's blocked/referer failures count
-        await db.users.update_one(
-            {"_id": user_id},
-            {"$inc": {"referer_failures": 1, "blocked_count": 1}}
-        )
-        # Send Telegram notification
-        await send_bypass_notification(user_id, short_id, "Invalid referer", request, db)
-        # Return bypass detected page for invalid referer
-        return RedirectResponse(url="/blocked", status_code=302)
-
-    # 2. Referer validated! Create a secure, short-lived server-side session.
+    # 2. Create a secure, short-lived server-side verification session with single-use token
     session_id = secrets.token_urlsafe(32)
     token = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(16)
@@ -1553,8 +1352,9 @@ async def original_shortlink(
         "created_at": timestamp,
         "expires_at": timestamp + 300,
         "status": "unused",
-        "verified": True,  # Already verified backend referer check
+        "verified": True,
         "consumed": False,
+        "referer_signal": referer_signal,
         "mode": link.get("mode", "NORMAL"),
         "manual_min_seconds": link.get("manual_min_seconds"),
         "manual_max_seconds": link.get("manual_max_seconds")
@@ -1562,7 +1362,7 @@ async def original_shortlink(
 
     await db.sessions.insert_one(session_doc)
 
-    # Increment success count on referer validation
+    # Update user statistics for legitimate session initialization
     await db.users.update_one(
         {"_id": user_id},
         {
@@ -1585,11 +1385,10 @@ async def original_shortlink(
         secure=is_secure,
         samesite="lax",
         path="/",
-        max_age=120  # 120 seconds TTL
+        max_age=120
     )
     return response
 
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
-
