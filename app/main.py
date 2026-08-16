@@ -781,7 +781,7 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
         "puppeteer", "playwright", "python", "curl", "wget", "go-http-client",
         "axios", "node-fetch", "urllib", "aiohttp", "httpx", "postman",
         "insomnia", "bypass", "ddxbypass", "bypassbot", "checker", "scraper",
-        "tampermonkey", "greasyfork", "violentmonkey", "script", "nicktrick"
+        "tampermonkey", "greasyfork", "violentmonkey", "nicktrick"
     ]
 
     for kw in bot_keywords:
@@ -807,20 +807,26 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
         blocked_count = user.get("blocked_count", 0)
         referer_failures = user.get("referer_failures", 0)
 
-        # Get client details
+        # Get client & request details
         client_ip = get_client_ip(request)
         user_agent = request.headers.get("user-agent", "Unknown")
+        referer = request.headers.get("referer", "None")
+        req_url = str(request.url)
 
         # HTML escape variables to prevent any Telegram parsing failure
         esc_short_id = html.escape(str(short_id))
         esc_reason = html.escape(str(reason))
         esc_client_ip = html.escape(str(client_ip))
         esc_user_agent = html.escape(str(user_agent))
+        esc_referer = html.escape(str(referer))
+        esc_req_url = html.escape(str(req_url))
 
         text = (
-            f"🚫 <b>BYPASS DETECTED</b>\n\n"
+            f"🚫 <b>BYPASS DETECTED REPORT</b>\n\n"
             f"⚡ <b>Link Short ID:</b> <code>{esc_short_id}</code>\n"
-            f"⚠️ <b>Reason:</b> <code>{esc_reason}</code>\n\n"
+            f"⚠️ <b>Reason:</b> <code>{esc_reason}</code>\n"
+            f"🌐 <b>Request URL:</b> <code>{esc_req_url}</code>\n"
+            f"🔗 <b>Referer:</b> <code>{esc_referer}</code>\n\n"
             f"ℹ️ <b>Client Information:</b>\n"
             f"• <b>IP:</b> <code>{esc_client_ip}</code>\n"
             f"• <b>User-Agent:</b> <code>{esc_user_agent}</code>\n\n"
@@ -866,13 +872,26 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     raw_url = str(request.url)
     url_dec = unquote(unquote(raw_url)).lower()
 
-    # Self-referential internal gateway route detection in Referer
+    # Dynamic domain matching against request base URL or configured BASE_URL
+    app_netlocs = set()
+    if request.base_url and request.base_url.netloc:
+        app_netlocs.add(request.base_url.netloc.lower())
+    if settings.BASE_URL:
+        base_parsed = urlparse(settings.BASE_URL)
+        if base_parsed.netloc:
+            app_netlocs.add(base_parsed.netloc.lower())
+
+    # Check for direct bypass tool Referers pointing to internal /continue or /blocked routes
     if raw_referer:
         try:
             ref_parsed = urlparse(raw_referer)
             ref_path = ref_parsed.path.lower()
+            ref_netloc = ref_parsed.netloc.lower()
 
-            if "/continue" in ref_path or "/redirect" in ref_path or "/blocked" in ref_path:
+            if "/blocked" in ref_path:
+                return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
+
+            if "token=" in referer_dec and any(domain in ref_netloc for domain in app_netlocs if domain):
                 return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
         except Exception:
             pass
@@ -939,7 +958,22 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     return False, ""
 
 @app.get("/blocked")
-async def blocked_page(request: Request):
+async def blocked_page(
+    request: Request,
+    db = Depends(get_database)
+):
+    # Check if a token, short_id, or redirect ID was passed in query string or Referer when a bypass URL was copied or expanded by Telegram/bots
+    token = request.query_params.get("token")
+
+    if token:
+        session = await db.sessions.find_one({"token": token})
+        if session and session.get("user_id"):
+            user_id = ObjectId(session["user_id"])
+            s_id = session.get("short_id", "unknown")
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
+            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+
     # If there are any query parameters, redirect to clean /blocked URL to strip them from the address bar
     if request.query_params:
         return RedirectResponse(url="/blocked", status_code=302)
