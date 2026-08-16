@@ -49,7 +49,8 @@ async def send_bot_msg(
     images = await get_active_banner_images()
     msg_obj = target.message if isinstance(target, types.CallbackQuery) else target
 
-    if images:
+    # Telegram caption limit is 1024 characters. Send photo with caption only if text <= 1024 chars.
+    if images and len(text) <= 1024:
         photo_url = random.choice(images)
         try:
             return await msg_obj.answer_photo(
@@ -606,8 +607,8 @@ async def cmd_delete(message: types.Message):
 def is_admin(user_id: int | str) -> bool:
     admin_list = settings.get_admin_ids()
     if not admin_list:
-        # If no explicit admin IDs configured in env/config, treat all as admin or fallback
-        return True
+        # Require explicit admin ID configuration for safety
+        return False
     return str(user_id) in admin_list
 
 def get_panel_keyboard():
