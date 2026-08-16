@@ -966,11 +966,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "bypass",
         "javascript:",
         "strict-origin-when-cross-origin",
-        "nicktrick redirect error",
-        "get link",
-        "get-link",
-        "document.write",
-        "document.open"
+        "nicktrick redirect error"
     ]
 
     # Check Referer and Request URL strings for banned keywords
@@ -1000,9 +996,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "stealth final",
         "bypass",
         "javascript:",
-        "strict-origin-when-cross-origin",
-        "get link",
-        "get-link"
+        "strict-origin-when-cross-origin"
     ]
 
     for k, v in request.query_params.items():
