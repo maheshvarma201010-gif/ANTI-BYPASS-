@@ -3,15 +3,26 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest
 from app.bot.bot import bot
 from app.models.database import get_database
 from app.core.security import generate_api_key, encrypt_url, decrypt_url
 from app.core.config import settings
 from datetime import datetime
 import httpx
+import logging
 from urllib.parse import urlparse
 
+logger = logging.getLogger(__name__)
 router = Router()
+
+async def safe_callback_answer(callback: types.CallbackQuery, *args, **kwargs):
+    try:
+        await callback.answer(*args, **kwargs)
+    except TelegramBadRequest:
+        pass
+    except Exception as e:
+        logger.warning(f"Error answering callback query: {e}")
 
 class ConnectStates(StatesGroup):
     waiting_for_url = State()
@@ -69,13 +80,13 @@ async def cb_connect_button(callback: types.CallbackQuery, state: FSMContext):
 
     keyboard = await get_connect_keyboard(telegram_id, db)
     await callback.message.answer("Choose a shortener or add a new one:", reply_markup=keyboard)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "add_shortener")
 async def cb_add_shortener(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("Step 1: Enter your Shortener Base URL.\nExample: https://arolinks.com")
+    await callback.message.answer("Step 1: Enter your Shortener Base URL.\nExample: https://example.com")
     await state.set_state(ConnectStates.waiting_for_url)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("sel_shortener:"))
 async def cb_select_shortener(callback: types.CallbackQuery):
@@ -88,7 +99,7 @@ async def cb_select_shortener(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="⬅️ Back", callback_data="back_to_connect")]
     ])
     await callback.message.answer(f"Shortener: *{name}*\n\nChoose an action:", parse_mode="Markdown", reply_markup=keyboard)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("view_shortener:"))
 async def cb_view_shortener(callback: types.CallbackQuery):
@@ -107,7 +118,7 @@ async def cb_view_shortener(callback: types.CallbackQuery):
         parse_mode="Markdown",
         reply_markup=keyboard
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("mode_normal:"))
 async def cb_mode_normal(callback: types.CallbackQuery):
@@ -117,7 +128,7 @@ async def cb_mode_normal(callback: types.CallbackQuery):
     user = await db.users.find_one({"telegram_id": telegram_id})
     if not user:
         await callback.message.answer("❌ User not found.")
-        await callback.answer()
+        await safe_callback_answer(callback)
         return
 
     # Set mode to NORMAL
@@ -134,7 +145,7 @@ async def cb_mode_normal(callback: types.CallbackQuery):
 
     if not shortener:
         await callback.message.answer("❌ Shortener configuration not found.")
-        await callback.answer()
+        await safe_callback_answer(callback)
         return
 
     original_api_key = decrypt_url(shortener.get("api_key"))
@@ -151,7 +162,7 @@ async def cb_mode_normal(callback: types.CallbackQuery):
         parse_mode="Markdown",
         reply_markup=get_start_keyboard()
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("mode_manual:"))
 async def cb_mode_manual(callback: types.CallbackQuery, state: FSMContext):
@@ -163,7 +174,7 @@ async def cb_mode_manual(callback: types.CallbackQuery, state: FSMContext):
         f"Step 1: Enter the start time in seconds.\n"
         f"Example: Enter `200` for 200 seconds."
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.message(ConnectStates.waiting_for_manual_start_time)
 async def process_manual_start_time(message: types.Message, state: FSMContext):
@@ -254,14 +265,14 @@ async def cb_delete_shortener(callback: types.CallbackQuery):
         {"$pull": {"shorteners": {"name": name}}}
     )
     await callback.message.answer(f"✅ Shortener *{name}* deleted successfully.", parse_mode="Markdown", reply_markup=get_start_keyboard())
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "back_to_connect")
 async def cb_back_to_connect(callback: types.CallbackQuery):
     db = get_database()
     keyboard = await get_connect_keyboard(str(callback.from_user.id), db)
     await callback.message.answer("Choose a shortener or add a new one:", reply_markup=keyboard)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "delete_account")
 async def cb_delete_account(callback: types.CallbackQuery):
@@ -269,7 +280,7 @@ async def cb_delete_account(callback: types.CallbackQuery):
     telegram_id = str(callback.from_user.id)
     await db.users.delete_one({"telegram_id": telegram_id})
     await callback.message.answer("✅ Account deleted successfully.")
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 @router.message(Command("connect"))
 async def cmd_connect(message: types.Message):

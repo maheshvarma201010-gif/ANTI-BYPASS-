@@ -1,92 +1,77 @@
-# 🛡️ Premium URL Shortener Anti-Bypass Protection System
+# Anti-Bypass Protection Service
 
-A state-of-the-art, high-performance, and extremely secure backend verification gateway designed to protect URL shortener redirects from bypass attempts. Built with **FastAPI**, **MongoDB (Motor)**, and **aiogram**, this system provides robust, industry-grade security while delivering a beautiful, seamless, and premium user experience.
+A robust, enterprise-grade anti-bypass URL protection system built with **FastAPI**, **MongoDB**, and **aiogram**. This service acts as a secure intermediary layer for URL shorteners, protecting shortlinks against automated bypass bots, scripts (e.g. Tampermonkey/Greasefork), bookmarklets, and unauthorized link scrapers.
 
 ---
 
-## ⚡ Redirection Redesign Model
+## 🌟 Core Features & Security Architecture
 
-The system operates entirely on the server-side to guarantee that no client-side script, browser extension, or storage manipulation can bypass target redirects.
+### 🛡️ Multi-Layer Anti-Bypass Suite
+1. **Strict Referer & Origin Detection:** Validates that incoming clicks originate directly from configured shortener domains or user shorteners, blocking direct paste/share bypass attempts.
+2. **Userscript & Extension Detection:** Blocks known bypass script patterns (such as Tampermonkey, Greasefork, nicktrick, stealth scripts) in query parameters and HTTP Referers.
+3. **Official Google Chrome Browser Enforcement:** Restricts gateway access exclusively to genuine Google Chrome browsers, neutralizing automated headless scrapers and unofficial client tools.
+4. **Context & Tab Isolation:** Uses dynamic single-use `sessionStorage` tokens tied to redirect IDs to prevent cross-tab or out-of-context link sharing.
+5. **Tab & Window Focus Protection:** Detects tab switching or browser window hiding during redirection, invalidating suspicious sessions immediately.
+6. **DOM Sandboxing:** Freezes `document.open`, `document.write`, and `document.writeln` using immutable property definitions (`Object.defineProperty`), preventing bookmarklets or injected scripts from overwriting page content.
+7. **Address Bar Sanitization:** Instantly scrubs tracking parameters, hash fragments, and active payload parameters using `window.history.replaceState`.
+8. **Server-Side Token State & Single-Use TTL:** Sessions and redirect tokens expire quickly (120s TTL) and transition atomically (`unused` → `consumed`) to prevent TOCTOU race conditions and replay attacks.
+9. **Instant Bot Violation Notifications:** Dispatches real-time, HTML-formatted Telegram alerts to the link owner whenever a bypass attempt is intercepted.
 
+---
+
+## 🤖 Telegram Bot Integration
+
+The integrated Telegram bot (`aiogram 3.x`) allows users to manage their shorteners and monitor real-time protection statistics.
+
+### Bot Commands
+- `/start` - Launch the bot and view main menu options.
+- `/connect` - Connect or manage URL shorteners.
+- `/api` - View connected shortener details and generated Anti-Bypass (ABP) API keys.
+- `/stats` - View total, successful, blocked, and referer failure request statistics.
+- `/delete` - Delete account and remove stored shorteners.
+
+### Verification Modes
+1. **NORMAL Mode:** Standard real-time browser integrity verification.
+2. **MANUAL Mode:** Timer-based verification window where verification is only allowed within a user-defined start and end time window in seconds.
+
+---
+
+## 🚀 Quick Start & Deployment
+
+### Prerequisites
+- Python 3.11+
+- MongoDB
+- Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
+
+### Environment Variables
+Create a `.env` file in the root directory:
+
+```env
+PROJECT_NAME="Anti-Bypass Protection"
+MONGODB_URL="mongodb://localhost:27017"
+DATABASE_NAME="anti_bypass_db"
+SECRET_KEY="your-super-secret-key"
+TELEGRAM_BOT_TOKEN="your-telegram-bot-token"
+BASE_URL="https://your-domain.com"
 ```
-Original Shortlink (e.g., https://arolinks.com/links?...)
-      ↓
-Backend Verification (Checks config & pre-determines platform on GET /{short_id})
-      ↓
-Verification successful
-      ↓
-Create Secure Server-side Session & Cryptographic Continuation Token
-      ↓
-Redirect to /continue?token=RANDOM_TOKEN (with secure cookie set)
-      ↓
-Anti-bypass/session validation (Cookie, same-tab Storage matching & referer presence check)
-      ↓
-Redirection Handled strictly on Server Side (GET /redirect?id=RED_ID) (HTTP 302)
-```
 
----
+### Running Locally
 
-## 🔒 Advanced Security & Anti-Bypass Protections
-
-The backend implements comprehensive, industry-leading defenses against direct pasting, parameter sharing, and replay attacks:
-
-### 1. 🍪 Secure Server-Side Sessions & Cookies
-- When a user opens the original shortlink, the backend validates their entry and creates a temporary server-side session in MongoDB with a cryptographically secure, random 256-bit `session_id`.
-- The `session_id` is set as an `HttpOnly`, `SameSite=Lax` cookie on the client's browser, restricted to `path="/"`.
-- This cookie is dynamically configured with the `secure` flag based on the incoming request scheme (True for HTTPS, False for HTTP).
-
-### 2. 🎟️ One-Time Continuation Tokens (Replay Protection)
-- Together with the session, a cryptographically secure random one-time `token` is generated and bound to the session.
-- When the client requests the `/continue` endpoint, the server atomically retrieves and invalidates the session in a single database transaction (`update_one` with `"consumed": False` filter). This completely eliminates any **Time-of-Check to Time-of-Use (TOCTOU)** race conditions and parallel request replays.
-
-### 3. ⏱️ Short-Lived Expiration (Session TTL)
-- Continuation sessions are valid for a maximum of **300 seconds (5 minutes)**, and redirection tokens expire in **120 seconds**. Any requests made after expiration are securely rejected.
-
-### 4. 🔒 Server-Side ID Redirection Hiding (No Decodes)
-- Target destination URLs are kept **100% hidden** on the client side. No base64-encoded strings or URL references are ever embedded in the gateway template.
-- REDIRECT is executed entirely on the server-side via `GET /redirect` using a unique, random redirection ID mapped in the server MongoDB collection, which redirects with an HTTP 302 response on verification success.
-
-### 5. 📑 Same-Tab Isolation via sessionStorage & SHA-256 Hashing
-- Enforces strict same-tab, same-browser, and same-session execution using:
-  - Cryptographically secure `tab_token` matched inside `sessionStorage` (preventing tab duplication or URL sharing).
-  - SHA-256 session integrity checks hashing the client's IP and User-Agent with a secure server-side salt.
-  - Active tab visibility tracking via the `visibilitychange` API. If tab switching, minimized browser window, or focus loss is detected, it instantly posts to `/report-violation` to permanently consume/expire the session and trigger Telegram alerts.
-
-### 6. 🔗 Dynamic Referral Relaxation for Arolinks and Vplinks
-- Resolves all false-positive blocks during manual solve processes on popular networks.
-- Before running the core bypass detectors, the backend looks up the shortener configuration from MongoDB. If the link belongs to **Arolinks** or **Vplinks** (or is linked to a user with Arolinks/Vplinks shorteners configured), the system dynamically relaxes the restrictions:
-  - **Skips query parameter absolute URL checks:** Prevents blocks caused by arolinks/vplinks appending absolute URLs or tracking parameters to the destination query on manual solves.
-  - **Permits intermediate referral domains:** Since these networks route users through dynamic advertiser or publisher domains, the referer header is automatically validated to guarantee legitimate users are never shown "Bypass Detected".
-
----
-
-## 🎨 Immersive & Stunning User Interface
-
-The system features two newly redesigned premium templates that blend modern web aesthetics with robust security mechanics:
-
-1. **Secure Transition Gateway:** A beautifully animated, high-tech glassmorphic card loader indicating connection status, integrity checks, and redirection progress with glowing, smooth-animating neon blue accents.
-2. **Access Blocked Screen:** A striking crimson red glassmorphism warning layout presented immediately when a bypass tool, userscript, or window manipulation is intercepted. It incorporates native script overrides and strict address bar query sanitization to block any bookmarklet hijack attempts.
-
----
-
-## 🤖 Telegram Bot Control Features
-
-Our anti-bypass bot allows creators to manage their shortener configurations easily with interactive menus:
-
-1. **Unlimited Shorteners:** Add and manage unlimited shortener configurations per user concurrently.
-2. **Interactive Callback Controls:** Beautiful Inline Keyboard buttons for:
-   - `➕ Connect / Reconnect`
-   - `👁️ View`
-   - `❌ Delete`
-3. **No Overwrites/Conflicts:** Features a unique suffix-matching system to handle duplicate name registrations (e.g., `Arolinks`, `Arolinks 2`) without overwriting previous configs.
-4. **Bypass Security Notifications:** Whenever a bypass attempt is intercepted, the bot asynchronously sends a rich private security alert to the creator's Telegram ID containing the exact reason, client info (IP, User-Agent), and their current link statistics.
-
----
-
-## 🧪 Testing & Verification
-
-Execute the comprehensive test suite with:
 ```bash
+# Install dependencies
 pip install -r requirements.txt
-python -m pytest
+
+# Start application server and Telegram bot
+bash start.sh
 ```
+
+---
+
+## 🔌 API Endpoints
+
+- `GET /{short_id}` - Entry shortlink endpoint with referer validation and session creation.
+- `GET /continue` - Serves secure JavaScript gateway template and session validation.
+- `GET /redirect` / `POST /redirect` - Secure HTTP 302 redirection endpoint.
+- `POST /report-violation` - Triggered on client-side security tampering to instantly invalidate sessions.
+- `POST /api/shorten` - Generate protected shortlinks programmatically.
+- `GET /health` - Health check status endpoint.
