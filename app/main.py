@@ -1506,35 +1506,49 @@ async def original_shortlink(
         return RedirectResponse(url="/blocked", status_code=302)
 
     # ============== REFERER VALIDATION ==============
-    # We do not block empty Referer because legitimate clicks from chat apps or browsers stripping Referer
-    # must not be falsely flagged as bypasses. Referer is only verified if it is present.
-    shortener_domain = urlparse(shortener_base_url).netloc.lower()
+    # Allow missing referer for direct clicks/chat apps, but strictly validate present referers against shorteners
+    shortener_domain = urlparse(shortener_base_url).netloc.lower() if shortener_base_url else ""
     parsed_base = urlparse(str(request.base_url))
     base_netloc = parsed_base.netloc.lower()
 
     referer_valid = False
     referer_reason = ""
 
-    if is_arolinks_or_vplinks:
-        referer_valid = True
-        referer_reason = "arolinks_vplinks_bypass_allowed"
-    elif not referer:
+    if not referer:
         referer_valid = True
         referer_reason = "missing_referer_allowed"
     else:
         ref_netloc = urlparse(referer).netloc.lower()
-        if shortener_domain and (shortener_domain in ref_netloc or ref_netloc in shortener_domain or check_referer_root(ref_netloc, shortener_domain)):
+
+        # Check if referer is AroLinks / VPLinks brand or matches shortener domain
+        if is_arolinks_or_vplinks_url(ref_netloc):
+            referer_valid = True
+            referer_reason = "arolinks_vplinks_referer"
+        elif shortener_domain and (shortener_domain in ref_netloc or ref_netloc in shortener_domain or check_referer_root(ref_netloc, shortener_domain)):
             referer_valid = True
             referer_reason = "shortener_match"
         elif base_netloc and (base_netloc in ref_netloc or ref_netloc in base_netloc):
             referer_valid = True
             referer_reason = "base_match"
-        elif await is_allowed_referer(referer, db):
-            referer_valid = True
-            referer_reason = "allowed_referer"
-        elif await is_related_domain(referer, shortener_domain, db):
-            referer_valid = True
-            referer_reason = "related_domain"
+        else:
+            # Check against any of user's connected shorteners
+            if user and user.get("shorteners"):
+                for s in user.get("shorteners", []):
+                    s_base = s.get("base_url")
+                    if s_base:
+                        s_domain = urlparse(s_base).netloc.lower()
+                        if s_domain and (s_domain in ref_netloc or ref_netloc in s_domain or check_referer_root(ref_netloc, s_domain)):
+                            referer_valid = True
+                            referer_reason = "user_shortener_match"
+                            break
+
+            if not referer_valid:
+                if await is_allowed_referer(referer, db):
+                    referer_valid = True
+                    referer_reason = "allowed_referer"
+                elif await is_related_domain(referer, shortener_domain, db):
+                    referer_valid = True
+                    referer_reason = "related_domain"
 
     if not referer_valid:
         if await is_whitelisted_user(user_id, db):
