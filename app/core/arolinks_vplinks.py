@@ -36,25 +36,27 @@ def detect_arolinks_vplinks_bypass(request: Request) -> tuple[bool, str]:
     referer = request.headers.get("referer", "")
     referer_decoded = unquote(referer).lower()
 
-    # Banned userscript indicators (specific to script files and userscript managers)
+    # Banned userscript indicators (specific to script files, userscript managers, and nicktrick bookmarklet)
     banned_referer_keywords = [
         "564048",
         "greasyfork.org/scripts",
         "tampermonkey",
         "stealth final",
-        ".user.js"
+        ".user.js",
+        "nicktrick",
+        "smart nicktrick"
     ]
 
     for kw in banned_referer_keywords:
         if kw in referer_decoded:
-            return True, f"Banned userscript pattern '{kw}' detected in Arolinks/Vplinks Referer"
+            return True, f"Banned userscript pattern '{kw}' detected in Referer"
 
-    # Check query parameters for explicit userscript URLs or script installer patterns
+    # Check query parameters for explicit userscript URLs, script installer patterns, or nicktrick
     for k, v in request.query_params.items():
-        k_dec = unquote(k).lower()
-        v_dec = unquote(v).lower()
+        k_dec = unquote(str(k)).lower()
+        v_dec = unquote(str(v)).lower()
 
-        if "greasyfork.org/scripts" in v_dec or ".user.js" in v_dec:
-            return True, f"Banned userscript pattern detected in Arolinks/Vplinks query parameters"
+        if "greasyfork.org/scripts" in v_dec or ".user.js" in v_dec or "nicktrick" in k_dec or "nicktrick" in v_dec:
+            return True, f"Banned userscript pattern 'nicktrick' detected in query parameters"
 
     return False, ""
