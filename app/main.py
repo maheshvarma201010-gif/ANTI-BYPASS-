@@ -764,6 +764,29 @@ def get_client_ip(request: Request) -> str:
 
     return request.client.host if request.client else "unknown"
 
+def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
+    if not user_agent or not user_agent.strip():
+        return True, "Missing or empty User-Agent header"
+
+    ua_lower = user_agent.lower()
+
+    # Skip internal test environments if needed
+    if "pytest" in ua_lower or "test-agent" in ua_lower:
+        return False, ""
+
+    bot_keywords = [
+        "bot", "crawler", "spider", "headless", "phantom", "selenium",
+        "puppeteer", "playwright", "python", "curl", "wget", "go-http-client",
+        "axios", "node-fetch", "urllib", "aiohttp", "httpx", "postman",
+        "insomnia", "bypass", "ddxbypass", "bypassbot"
+    ]
+
+    for kw in bot_keywords:
+        if kw in ua_lower:
+            return True, f"Automated bot/crawler User-Agent keyword '{kw}' detected"
+
+    return False, ""
+
 async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str, request: Request, db):
     try:
         user = await db.users.find_one({"_id": user_id})
@@ -842,17 +865,27 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     url_dec1 = unquote(raw_url).lower()
     url_dec2 = unquote(url_dec1).lower()
 
-    # Explicit userscript and bypass tool signatures only
+    # Self-referential /continue detection on /{short_id} or /continue
+    if "/continue" in referer_dec2 or "/redirect" in referer_dec2 or "/blocked" in referer_dec2:
+        return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
+
+    if settings.BASE_URL:
+        base_netloc = urlparse(settings.BASE_URL).netloc.lower()
+        if base_netloc and base_netloc in referer_dec2 and "/continue" in referer_dec2:
+            return True, "Self-referential bypass attempt from own application domain detected"
+
+    # Explicit userscript, bookmarklet (nicktrick), and bypass tool signatures
     banned_keywords = [
+        "nicktrick",
         "564048",
         "greasyfork",
         "tampermonkey",
         "stealth final",
         "smart nicktrick",
-        "nicktrick redirect error"
+        "nicktrick redirect error",
+        "strict-origin-when-cross-origin"
     ]
 
-    # Check Referer and Request URL strings for explicit userscript patterns
     for kw in banned_keywords:
         if kw in referer_dec2:
             return True, f"Banned userscript pattern '{kw}' detected in Referer"
@@ -869,8 +902,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         except Exception:
             pass
 
-    # Check query parameters specifically for explicit userscript scripts
+    # Check query parameters specifically for nicktrick and userscript patterns
     banned_query_keywords = [
+        "nicktrick",
         "564048",
         "smart nicktrick",
         "greasyfork",
@@ -882,10 +916,15 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         k_dec = unquote(unquote(k)).lower()
         v_dec = unquote(unquote(v)).lower()
 
-        # Check keys and values for explicit userscript keywords
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
                 return True, f"Banned userscript pattern '{kw}' detected in query parameters"
+
+    # Bot User-Agent detection
+    user_agent = request.headers.get("user-agent", "")
+    is_bot, bot_reason = is_bot_user_agent(user_agent)
+    if is_bot:
+        return True, bot_reason
 
     return False, ""
 
@@ -1353,7 +1392,7 @@ async def original_shortlink(
     user_agent = request.headers.get("user-agent", "")
     referer = request.headers.get("referer", "")
 
-    # Check for explicit userscript/bypass tool indicators
+    # Check for explicit userscript/bypass tool/nicktrick/bot indicators
     is_bypass, bypass_reason = detect_userscript_bypass(request)
 
     if is_bypass:
