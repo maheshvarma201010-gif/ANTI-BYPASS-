@@ -40,6 +40,30 @@ async def get_active_banner_images() -> list[str]:
         images = settings.get_image_urls()
     return images
 
+async def fetch_valid_photo(images: list[str]) -> tuple[types.BufferedInputFile | str | None, str | None]:
+    if not images:
+        return None, None
+
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    shuffled = images.copy()
+    random.shuffle(shuffled)
+
+    # Try up to 3 candidate URLs
+    for url in shuffled[:3]:
+        try:
+            async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=4.0) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    ct = resp.headers.get("content-type", "").lower()
+                    if "image" in ct or url.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                        filename = url.split("/")[-1].split("?")[0] or "banner.jpg"
+                        input_file = types.BufferedInputFile(resp.content, filename=filename)
+                        return input_file, url
+        except Exception:
+            pass
+
+    return None, None
+
 async def send_bot_msg(
     target: types.Message | types.CallbackQuery,
     text: str,
@@ -51,28 +75,17 @@ async def send_bot_msg(
 
     # Telegram caption limit is 1024 characters. Send photo with caption only if text <= 1024 chars.
     if images and len(text) <= 1024:
-        photo_url = random.choice(images)
-        try:
-            # Use URLInputFile so aiogram downloads the image file locally and uploads it as photo bytes,
-            # avoiding Telegram server-side URL fetch errors like "wrong type of the web page content"
-            photo_input = types.URLInputFile(photo_url)
-            return await msg_obj.answer_photo(
-                photo=photo_input,
-                caption=text,
-                parse_mode=parse_mode,
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            logger.warning(f"Failed to send URLInputFile photo ({photo_url}), trying raw string URL: {e}")
+        buffered_photo, raw_url = await fetch_valid_photo(images)
+        if buffered_photo:
             try:
                 return await msg_obj.answer_photo(
-                    photo=photo_url,
+                    photo=buffered_photo,
                     caption=text,
                     parse_mode=parse_mode,
                     reply_markup=reply_markup
                 )
-            except Exception as ex:
-                logger.warning(f"Failed to send photo ({photo_url}), falling back to text: {ex}")
+            except Exception as e:
+                logger.warning(f"Failed to send BufferedInputFile photo ({raw_url}): {e}")
 
     return await msg_obj.answer(
         text=text,
