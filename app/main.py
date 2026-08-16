@@ -67,12 +67,13 @@ BYPASS_DETECTED_TEMPLATE = """
         body {
             margin: 0;
             min-height: 100vh;
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            color: #f4f4f5;
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #ffffff;
             background:
-                radial-gradient(circle at 50% -20%, rgba(220, 38, 38, 0.2), transparent 45%),
-                radial-gradient(circle at 10% 90%, rgba(15, 23, 42, 0.4), transparent 35%),
-                #03000a;
+                radial-gradient(circle at 50% -20%, rgba(239, 68, 68, 0.25), transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(245, 158, 11, 0.15), transparent 40%),
+                radial-gradient(circle at 10% 90%, rgba(30, 58, 138, 0.35), transparent 45%),
+                #030712;
             overflow-x: hidden;
             display: flex;
             align-items: center;
@@ -265,12 +266,12 @@ BYPASS_DETECTED_TEMPLATE = """
                 </svg>
             </div>
 
-            <h1 class="shimmer">
-                Nice Try, Noob!
+            <h1 class="shimmer" style="font-style: italic;">
+                <b><i>Bypass Tools Detected!</i></b>
             </h1>
 
             <p class="desc-text">
-                NOOB, these bloody tricks do not work in front of the Lord, because the Lord is a pro!
+                <b><i>Bypass tools detected and access blocked now!</i></b>
             </p>
 
             <div class="footer-line">
@@ -309,12 +310,13 @@ GATEWAY_TEMPLATE = """
         body {
             margin: 0;
             min-height: 100vh;
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            color: #f4f4f5;
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #ffffff;
             background:
-                radial-gradient(circle at 50% -20%, rgba(59, 130, 246, 0.15), transparent 45%),
-                radial-gradient(circle at 10% 90%, rgba(15, 23, 42, 0.4), transparent 35%),
-                #03000a;
+                radial-gradient(circle at 50% -20%, rgba(59, 130, 246, 0.25), transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(245, 158, 11, 0.12), transparent 40%),
+                radial-gradient(circle at 10% 90%, rgba(30, 58, 138, 0.35), transparent 45%),
+                #030712;
             overflow-x: hidden;
             display: flex;
             align-items: center;
@@ -890,6 +892,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         if base_netloc and base_netloc in referer_dec2 and ("/continue" in referer_dec2 or "token=" in referer_dec2):
             return True, "Self-referential bypass attempt from own application domain detected"
 
+    # Check explicitly for anti-bypass bypass links / tokens like anti-bypass-xkpb.onrender.com
+    if "anti-bypass-xkpb.onrender.com" in referer_dec2 or "anti-bypass-xkpb.onrender.com" in url_dec2:
+        return True, "Bypass tool source 'anti-bypass-xkpb.onrender.com' detected"
+
     # Explicit userscript, bookmarklet (nicktrick), and bypass tool signatures
     banned_keywords = [
         "nicktrick",
@@ -902,7 +908,12 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "strict-origin-when-cross-origin",
         "click to continue",
         "00c853",
-        "get link"
+        "get link",
+        "top!==self",
+        "searchparams.get(\"nicktrick\")",
+        "searchparams.get('nicktrick')",
+        "document.write",
+        "document.open"
     ]
 
     for kw in banned_keywords:

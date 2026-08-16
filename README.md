@@ -1,77 +1,79 @@
 # Anti-Bypass Protection Service
 
-A robust, enterprise-grade anti-bypass URL protection system built with **FastAPI**, **MongoDB**, and **aiogram**. This service acts as a secure intermediary layer for URL shorteners, protecting shortlinks against automated bypass bots, scripts (e.g. Tampermonkey/Greasefork), bookmarklets, and unauthorized link scrapers.
+A high-performance, enterprise-grade anti-bypass URL protection system built with **FastAPI**, **MongoDB**, and **aiogram**. This service acts as a secure intermediary layer for URL shorteners, protecting shortlinks against automated bypass bots, scripts (e.g. NickTrick, Tampermonkey, Greasefork), bookmarklets, and unauthorized link scrapers.
 
 ---
 
 ## 🌟 Core Features & Security Architecture
 
 ### 🛡️ Multi-Layer Anti-Bypass Suite
-1. **Strict Referer & Origin Detection:** Validates that incoming clicks originate directly from configured shortener domains or user shorteners, blocking direct paste/share bypass attempts.
-2. **Userscript & Extension Detection:** Blocks known bypass script patterns (such as Tampermonkey, Greasefork, nicktrick, stealth scripts) in query parameters and HTTP Referers.
-3. **Official Google Chrome Browser Enforcement:** Restricts gateway access exclusively to genuine Google Chrome browsers, neutralizing automated headless scrapers and unofficial client tools.
+1. **Strict Referer & Origin Detection:** Validates that incoming clicks originate directly from configured shortener domains, blocking direct paste/share bypass attempts and self-referential gateway links.
+2. **Userscript & Bookmarklet Detection:** Instantly blocks known bypass script patterns (such as NickTrick, Tampermonkey, Greasefork, stealth scripts, `top!==self`, `document.write`) in query parameters, HTTP Referers, and request URLs.
+3. **Environment & Render Configuration Fallback:** Loads configuration seamlessly from environment variables (e.g., Render, Koyeb, Docker) or defaults defined in `app/core/config.py`.
 4. **Context & Tab Isolation:** Uses dynamic single-use `sessionStorage` tokens tied to redirect IDs to prevent cross-tab or out-of-context link sharing.
-5. **Tab & Window Focus Protection:** Detects tab switching or browser window hiding during redirection, invalidating suspicious sessions immediately.
-6. **DOM Sandboxing:** Freezes `document.open`, `document.write`, and `document.writeln` using immutable property definitions (`Object.defineProperty`), preventing bookmarklets or injected scripts from overwriting page content.
-7. **Address Bar Sanitization:** Instantly scrubs tracking parameters, hash fragments, and active payload parameters using `window.history.replaceState`.
-8. **Server-Side Token State & Single-Use TTL:** Sessions and redirect tokens expire quickly (120s TTL) and transition atomically (`unused` → `consumed`) to prevent TOCTOU race conditions and replay attacks.
-9. **Instant Bot Violation Notifications:** Dispatches real-time, HTML-formatted Telegram alerts to the link owner whenever a bypass attempt is intercepted.
+5. **DOM Sandboxing:** Freezes `document.open`, `document.write`, and `document.writeln` using immutable property definitions (`Object.defineProperty`), preventing bookmarklets or injected scripts from overwriting page content.
+6. **Address Bar Sanitization:** Instantly scrubs tracking parameters, hash fragments, and active payload parameters using `window.history.replaceState`.
+7. **Server-Side Token State & Single-Use TTL:** Sessions and redirect tokens expire quickly (120s TTL) and transition atomically (`unused` → `consumed`) to prevent TOCTOU race conditions and replay attacks.
+8. **Instant Bot Violation Notifications:** Dispatches real-time, HTML-formatted Telegram alerts to the link owner whenever a bypass attempt is intercepted.
 
 ---
 
-## 🤖 Telegram Bot Integration
+## 🤖 Telegram Bot & Admin Panel
 
-The integrated Telegram bot (`aiogram 3.x`) allows users to manage their shorteners and monitor real-time protection statistics.
+The integrated Telegram bot (`aiogram 3.x`) provides an intuitive dashboard with premium UI styling, clean blockquotes, and vibrant emojis.
 
-### Bot Commands
-- `/start` - Launch the bot and view main menu options.
-- `/connect` - Connect or manage URL shorteners.
+### 🚀 Commands Guide
+- `/start` - Access the main menu dashboard.
+- `/connect` - Connect, view, or manage URL shorteners.
 - `/api` - View connected shortener details and generated Anti-Bypass (ABP) API keys.
-- `/stats` - View total, successful, blocked, and referer failure request statistics.
-- `/delete` - Delete account and remove stored shorteners.
+- `/stats` - View real-time request traffic, successful verifications, and blocked bypass metrics.
+- `/panel` - **Admin Panel** to view, add bulk image banner URLs (100+ in a single message), or clear banners.
+- `/help` - View complete bot usage guide and documentation.
+- `/delete` - Remove account and all connected shortener configurations.
 
-### Verification Modes
+### 🖼️ Banner Image Management
+- Admins can configure banner image URLs via the `/panel` command or environment variables (`IMAGE_URLS`).
+- When banner image URLs are added, the bot randomly attaches a banner image to every message reply.
+- If zero URLs are configured, the bot operates seamlessly in text-only mode without throwing errors.
+
+### ⚙️ Verification Modes
 1. **NORMAL Mode:** Standard real-time browser integrity verification.
 2. **MANUAL Mode:** Timer-based verification window where verification is only allowed within a user-defined start and end time window in seconds.
 
 ---
 
-## 🚀 Quick Start & Deployment
+## 🚀 Environment Variables
 
-### Prerequisites
-- Python 3.11+
-- MongoDB
-- Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
-
-### Environment Variables
-Create a `.env` file in the root directory:
+Configure environment variables in Render, Koyeb, or your local `.env` file:
 
 ```env
 PROJECT_NAME="Anti-Bypass Protection"
 MONGODB_URL="mongodb://localhost:27017"
-DATABASE_NAME="anti_bypass_db"
+DATABASE_NAME="antibypass"
 SECRET_KEY="your-super-secret-key"
+ENCRYPTION_KEY="32-byte-long-secret-key-for-aes-!!"
 TELEGRAM_BOT_TOKEN="your-telegram-bot-token"
 BASE_URL="https://your-domain.com"
-```
 
-### Running Locally
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Start application server and Telegram bot
-bash start.sh
+# Admin & Banner Image Configuration
+ADMIN_IDS="123456789,987654321"
+IMAGE_URLS="https://example.com/banner1.jpg,https://example.com/banner2.jpg"
 ```
 
 ---
 
-## 🔌 API Endpoints
+## 🔌 API Integration
 
-- `GET /{short_id}` - Entry shortlink endpoint with referer validation and session creation.
-- `GET /continue` - Serves secure JavaScript gateway template and session validation.
-- `GET /redirect` / `POST /redirect` - Secure HTTP 302 redirection endpoint.
-- `POST /report-violation` - Triggered on client-side security tampering to instantly invalidate sessions.
-- `POST /api/shorten` - Generate protected shortlinks programmatically.
-- `GET /health` - Health check status endpoint.
+To protect links programmatically, send a request to the API endpoint with your generated **ABP API Key**:
+
+```http
+GET /api?api=YOUR_ABP_KEY&url=https://target-destination.com
+```
+
+Response format:
+```json
+{
+  "status": "success",
+  "short_url": "https://example.com/xyz123"
+}
+```
