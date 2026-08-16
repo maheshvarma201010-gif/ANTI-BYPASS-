@@ -881,12 +881,19 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     # Explicit userscript, bookmarklet (nicktrick), and bypass tool signatures
     banned_keywords = [
         "nicktrick",
+        "javascript:",
         "564048",
         "greasyfork",
         "tampermonkey",
         "stealth final",
         "smart nicktrick",
-        "nicktrick redirect error"
+        "nicktrick redirect error",
+        "top!==self",
+        "searchparams.get",
+        "document.write",
+        "document.open",
+        "ddxbypass",
+        "bypassbot"
     ]
 
     for kw in banned_keywords:
@@ -898,11 +905,14 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     # Check query parameters specifically for nicktrick and userscript patterns
     banned_query_keywords = [
         "nicktrick",
+        "javascript:",
         "564048",
         "smart nicktrick",
         "greasyfork",
         "tampermonkey",
-        "stealth final"
+        "stealth final",
+        "ddxbypass",
+        "bypassbot"
     ]
 
     for k, v in request.query_params.items():
@@ -911,6 +921,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
         if k_dec == "nicktrick" or "nicktrick" in k_dec or "nicktrick" in v_dec:
             return True, "NickTrick parameter detected in query string"
+
+        if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
+            return True, "Bypass query parameter pattern detected"
 
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
