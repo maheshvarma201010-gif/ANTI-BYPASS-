@@ -865,13 +865,29 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     url_dec1 = unquote(raw_url).lower()
     url_dec2 = unquote(url_dec1).lower()
 
-    # Self-referential /continue detection on /{short_id} or /continue
-    if "/continue" in referer_dec2 or "/redirect" in referer_dec2 or "/blocked" in referer_dec2:
-        return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
+    req_netloc = request.base_url.netloc.lower() if request.base_url else ""
+
+    # Self-referential /continue or gateway route detection in Referer
+    if raw_referer:
+        try:
+            ref_parsed = urlparse(raw_referer)
+            ref_netloc = ref_parsed.netloc.lower()
+            ref_path = ref_parsed.path.lower()
+
+            if "/continue" in ref_path or "/redirect" in ref_path or "/blocked" in ref_path or "continue?token=" in referer_dec2:
+                return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
+
+            if req_netloc and req_netloc in ref_netloc and ("/continue" in ref_path or "token=" in referer_dec2):
+                return True, "Self-referential bypass attempt from own application domain detected"
+
+            if "anti-bypass" in ref_netloc and ("/continue" in ref_path or "token=" in referer_dec2):
+                return True, "Anti-bypass self-referential gateway Referer detected"
+        except Exception:
+            pass
 
     if settings.BASE_URL:
         base_netloc = urlparse(settings.BASE_URL).netloc.lower()
-        if base_netloc and base_netloc in referer_dec2 and "/continue" in referer_dec2:
+        if base_netloc and base_netloc in referer_dec2 and ("/continue" in referer_dec2 or "token=" in referer_dec2):
             return True, "Self-referential bypass attempt from own application domain detected"
 
     # Explicit userscript, bookmarklet (nicktrick), and bypass tool signatures
@@ -883,7 +899,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "stealth final",
         "smart nicktrick",
         "nicktrick redirect error",
-        "strict-origin-when-cross-origin"
+        "strict-origin-when-cross-origin",
+        "click to continue",
+        "00c853",
+        "get link"
     ]
 
     for kw in banned_keywords:
@@ -915,6 +934,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     for k, v in request.query_params.items():
         k_dec = unquote(unquote(k)).lower()
         v_dec = unquote(unquote(v)).lower()
+
+        if k_dec == "nicktrick" or "nicktrick" in k_dec or "nicktrick" in v_dec:
+            return True, "NickTrick parameter detected in query string"
 
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
