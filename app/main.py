@@ -5,7 +5,6 @@ from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
-from app.core.arolinks_vplinks import is_arolinks_or_vplinks_request, is_arolinks_or_vplinks_url, detect_arolinks_vplinks_bypass
 
 
 
@@ -618,7 +617,6 @@ GATEWAY_TEMPLATE = """
             const REDIRECT_ID = "{redirect_id}";
             const TAB_TOKEN = "{tab_token}";
             const NONCE = "{nonce}";
-            const IS_AROLINKS_OR_VPLINKS = "{is_arolinks_or_vplinks}" === "true";
             const steps = [
                 { percent: 15, text: "Analyzing headers..." },
                 { percent: 35, text: "Verifying browser engine..." },
@@ -702,46 +700,42 @@ GATEWAY_TEMPLATE = """
                 nativeDefineProperty(document, 'writeln', { value: onTamperAttempt, writable: false, configurable: false });
             } catch(e) {}
 
-            // Enforce same-tab context isolation using sessionStorage (skipped for AroLinks/VPLinks)
-            if (!IS_AROLINKS_OR_VPLINKS) {
-                try {
-                    const storageKey = 'tab_token_' + REDIRECT_ID;
-                    if (!sessionStorage.getItem(storageKey)) {
-                        sessionStorage.setItem(storageKey, TAB_TOKEN);
-                    } else if (sessionStorage.getItem(storageKey) !== TAB_TOKEN) {
-                        reportViolation("Tab context token mismatch in sessionStorage");
-                        showError(
-                            "Tab Security Violation",
-                            "Security violation: Redirection can only be completed in the exact same browser tab where the session started."
-                        );
-                        return;
-                    }
-                } catch(e) {}
-            }
+            // Enforce same-tab context isolation using sessionStorage
+            try {
+                const storageKey = 'tab_token_' + REDIRECT_ID;
+                if (!sessionStorage.getItem(storageKey)) {
+                    sessionStorage.setItem(storageKey, TAB_TOKEN);
+                } else if (sessionStorage.getItem(storageKey) !== TAB_TOKEN) {
+                    reportViolation("Tab context token mismatch in sessionStorage");
+                    showError(
+                        "Tab Security Violation",
+                        "Security violation: Redirection can only be completed in the exact same browser tab where the session started."
+                    );
+                    return;
+                }
+            } catch(e) {}
 
-            // 2.1 Tab and Browser Window switching protection (skipped for AroLinks/VPLinks)
+            // 2.1 Tab and Browser Window switching protection
             let onVisibilityChange;
-            if (!IS_AROLINKS_OR_VPLINKS) {
-                try {
-                    const handleHide = function() {
-                        if (!tamperingDetected) {
-                            reportViolation("Tab/Window switching detected");
-                            showError(
-                                "Bypass Attempt Blocked",
-                                "Security violation: Tab or window switching detected. This verification must be completed in the exact same tab and browser window without interruption."
-                            );
-                        }
-                    };
-                    onVisibilityChange = function() {
-                        if (document.visibilityState === 'hidden') {
-                            handleHide();
-                        }
-                    };
-                    document.addEventListener('visibilitychange', onVisibilityChange);
-                } catch(e) {}
-            }
+            try {
+                const handleHide = function() {
+                    if (!tamperingDetected) {
+                        reportViolation("Tab/Window switching detected");
+                        showError(
+                            "Bypass Attempt Blocked",
+                            "Security violation: Tab or window switching detected. This verification must be completed in the exact same tab and browser window without interruption."
+                        );
+                    }
+                };
+                onVisibilityChange = function() {
+                    if (document.visibilityState === 'hidden') {
+                        handleHide();
+                    }
+                };
+                document.addEventListener('visibilitychange', onVisibilityChange);
+            } catch(e) {}
 
-            // 1. Strict Google Chrome Only Browser Check (skipped for AroLinks/VPLinks)
+            // 1. Strict Google Chrome Only Browser Check
             function isGenuineChrome() {
                 const ua = navigator.userAgent || '';
                 const vendor = navigator.vendor || '';
@@ -783,7 +777,7 @@ GATEWAY_TEMPLATE = """
                 return true;
             }
 
-            if (!IS_AROLINKS_OR_VPLINKS && !isGenuineChrome()) {
+            if (!isGenuineChrome()) {
                 showError(
                     "Unsupported Browser Detected",
                     "To maintain high security and prevent unauthorized bypass attempts, this connection is strictly restricted to the official Google Chrome browser. Other browsers (including Brave, Kiwi, Mises, Edge, Opera, Firefox, etc.) are blocked. Please copy this link and open it in Google Chrome."
@@ -952,37 +946,26 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
     except Exception as e:
         logger.error(f"Failed to send Telegram notification: {e}")
 
-def detect_userscript_bypass(request: Request, is_arolinks_or_vplinks: bool = False) -> tuple[bool, str]:
+def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     from urllib.parse import unquote
 
     referer = request.headers.get("referer", "")
     referer_decoded = unquote(referer).lower()
-
-    # Determine if referer is from arolinks or vplinks
-    if not is_arolinks_or_vplinks:
-        is_arolinks_or_vplinks = is_arolinks_or_vplinks_url(referer_decoded)
 
     banned_referer_keywords = [
         "564048",
         "greasyfork",
         "tampermonkey",
         "stealth final",
-        "github.com"
+        "github.com",
+        "nicktrick",
+        "smart nicktrick"
     ]
-
-    # Only enforce "nicktrick" and "smart nicktrick" blocks for OTHER domains, not for arolinks/vplinks
-    if not is_arolinks_or_vplinks:
-        banned_referer_keywords.extend(["nicktrick", "smart nicktrick"])
 
     for kw in banned_referer_keywords:
         if kw in referer_decoded:
             return True, f"Banned userscript pattern '{kw}' detected in Referer"
 
-    # If it is arolinks or vplinks, we skip ALL query parameter validation checks to prevent false positives
-    if is_arolinks_or_vplinks:
-        return False, ""
-
-    # Check query parameters (both raw and unquoted)
     banned_query_keywords = [
         "564048",
         "smart nicktrick",
@@ -993,19 +976,16 @@ def detect_userscript_bypass(request: Request, is_arolinks_or_vplinks: bool = Fa
     ]
 
     for k, v in request.query_params.items():
-        k_dec = unquote(k).lower()
-        v_dec = unquote(v).lower()
+        k_dec = unquote(str(k)).lower()
+        v_dec = unquote(str(v)).lower()
 
-        # Check keys and values for banned keywords
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
                 return True, f"Banned userscript pattern '{kw}' detected in query parameters"
 
-        # Direct key check for "bypass"
         if "bypass" in k_dec:
             return True, "Banned query parameter 'bypass' detected"
 
-        # Check for absolute URLs in parameter values to prevent nicktrick or deep nested redirects
         if "http://" in v_dec or "https://" in v_dec or "://" in v_dec:
             return True, "Absolute URL injection detected in query parameter"
 
@@ -1046,42 +1026,22 @@ async def continue_endpoint(
 
     referer = request.headers.get("referer", "")
 
-    # ============== PRE-DETERMINE AROLINKS OR VPLINKS ==============
-    is_arolinks_or_vplinks = False
-    shortener_base_url = None
-    user_shorteners = None
-    if short_id != "unknown":
-        link = await db.protected_links.find_one({"short_id": short_id})
-        if link:
-            if not user_id:
-                user_id = ObjectId(link['user_id'])
-            user = await db.users.find_one({"_id": user_id})
-            if user:
-                shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
-                user_shorteners = user.get("shorteners", [])
-
-    is_arolinks_or_vplinks = session.get("is_arolinks_or_vplinks", False) or is_arolinks_or_vplinks_request(shortener_base_url, referer, user_shorteners)
-
-    # Check for userscript/bypass tool indicators using our specialized detectors
-    if is_arolinks_or_vplinks:
-        is_bypass, bypass_reason = detect_arolinks_vplinks_bypass(request)
-    else:
-        is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
 
     if is_bypass:
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         # INSTANTLY EXPIRE!
-        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         return RedirectResponse(url="/blocked", status_code=302)
 
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
 
-    # Direct paste/share protection of the redirect URL: Referer must be present on internal continuation redirect (skipped for AroLinks/VPLinks)
-    if not referer and not is_arolinks_or_vplinks:
+    # Direct paste/share protection of the redirect URL: Referer must be present on internal continuation redirect
+    if not referer:
         return RedirectResponse(url="/blocked", status_code=302)
 
     user_id_str = session.get("user_id")
@@ -1174,20 +1134,17 @@ async def continue_endpoint(
             "nonce": gateway_nonce,
             "user_id": str(user_id) if user_id else None,
             "short_id": short_id,
-            "is_arolinks_or_vplinks": is_arolinks_or_vplinks,
             "mode": session.get("mode", "NORMAL"),
             "manual_min_seconds": session.get("manual_min_seconds"),
             "manual_max_seconds": session.get("manual_max_seconds"),
             "session_start_time": session.get("created_at")
         })
 
-        is_arolinks_str = "true" if is_arolinks_or_vplinks else "false"
         html_content = (
             GATEWAY_TEMPLATE
             .replace("{redirect_id}", redirect_id)
             .replace("{tab_token}", tab_token)
             .replace("{nonce}", gateway_nonce)
-            .replace("{is_arolinks_or_vplinks}", is_arolinks_str)
         )
         return HTMLResponse(content=html_content, status_code=200)
 
@@ -1250,12 +1207,11 @@ async def redirect_endpoint(
     if expected_session_id and expected_session_id != cookie_session_id:
         return RedirectResponse(url="/blocked", status_code=302)
 
-    # Same-tab validation (skipped for AroLinks/VPLinks)
-    if not redirect_doc.get("is_arolinks_or_vplinks", False):
-        expected_tab_token = redirect_doc.get("tab_token")
-        tab_param = request.query_params.get("tab")
-        if expected_tab_token and expected_tab_token != tab_param:
-            return RedirectResponse(url="/blocked", status_code=302)
+    # Same-tab validation
+    expected_tab_token = redirect_doc.get("tab_token")
+    tab_param = request.query_params.get("tab")
+    if expected_tab_token and expected_tab_token != tab_param:
+        return RedirectResponse(url="/blocked", status_code=302)
 
     # Atomically mark the redirect ID as consumed and verified
     result = await db.redirects.update_one(
@@ -1385,12 +1341,11 @@ async def redirect_post_endpoint(
     if expected_session_id and expected_session_id != cookie_session_id:
         raise HTTPException(status_code=403, detail="Session verification failed")
 
-    # Same-tab validation (skipped for AroLinks/VPLinks)
-    if not redirect_doc.get("is_arolinks_or_vplinks", False):
-        expected_tab_token = redirect_doc.get("tab_token")
-        tab_param = body.get("tab")
-        if expected_tab_token and expected_tab_token != tab_param:
-            raise HTTPException(status_code=403, detail="Tab security violation")
+    # Same-tab validation
+    expected_tab_token = redirect_doc.get("tab_token")
+    tab_param = body.get("tab")
+    if expected_tab_token and expected_tab_token != tab_param:
+        raise HTTPException(status_code=403, detail="Tab security violation")
 
     # Atomically mark as consumed and verified
     result = await db.redirects.update_one(
@@ -1492,13 +1447,8 @@ async def original_shortlink(
     if not shortener_base_url:
         shortener_base_url = settings.BASE_URL
 
-    is_arolinks_or_vplinks = is_arolinks_or_vplinks_request(shortener_base_url, referer, user.get("shorteners", []) if user else None)
-
-    # Check for userscript/bypass tool indicators using our specialized detectors
-    if is_arolinks_or_vplinks:
-        is_bypass, bypass_reason = detect_arolinks_vplinks_bypass(request)
-    else:
-        is_bypass, bypass_reason = detect_userscript_bypass(request, is_arolinks_or_vplinks)
+    # Check for userscript/bypass tool indicators
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
 
     if is_bypass:
         await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
@@ -1508,8 +1458,6 @@ async def original_shortlink(
     # ============== REFERER VALIDATION ==============
     # Allow missing referer for direct clicks/chat apps, but strictly validate present referers against shorteners
     shortener_domain = urlparse(shortener_base_url).netloc.lower() if shortener_base_url else ""
-    parsed_base = urlparse(str(request.base_url))
-    base_netloc = parsed_base.netloc.lower()
 
     referer_valid = False
     referer_reason = ""
@@ -1520,16 +1468,9 @@ async def original_shortlink(
     else:
         ref_netloc = urlparse(referer).netloc.lower()
 
-        # Check if referer is AroLinks / VPLinks brand or matches shortener domain
-        if is_arolinks_or_vplinks_url(ref_netloc):
-            referer_valid = True
-            referer_reason = "arolinks_vplinks_referer"
-        elif shortener_domain and (shortener_domain in ref_netloc or ref_netloc in shortener_domain or check_referer_root(ref_netloc, shortener_domain)):
+        if shortener_domain and (shortener_domain in ref_netloc or ref_netloc in shortener_domain or check_referer_root(ref_netloc, shortener_domain)):
             referer_valid = True
             referer_reason = "shortener_match"
-        elif base_netloc and (base_netloc in ref_netloc or ref_netloc in base_netloc):
-            referer_valid = True
-            referer_reason = "base_match"
         else:
             # Check against any of user's connected shorteners
             if user and user.get("shorteners"):
@@ -1589,7 +1530,6 @@ async def original_shortlink(
         "status": "unused",
         "verified": True,  # Already verified backend referer check
         "consumed": False,
-        "is_arolinks_or_vplinks": is_arolinks_or_vplinks,
         "mode": link.get("mode", "NORMAL"),
         "manual_min_seconds": link.get("manual_min_seconds"),
         "manual_max_seconds": link.get("manual_max_seconds")
