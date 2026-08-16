@@ -1289,6 +1289,45 @@ def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
     return False
 
 
+def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
+    if not shortener_base_url:
+        return True
+
+    if not referer:
+        return False
+
+    from urllib.parse import unquote, urlparse
+
+    ref_clean = unquote(referer).strip()
+    shortener_clean = unquote(shortener_base_url).strip()
+
+    try:
+        ref_parsed = urlparse(ref_clean if "://" in ref_clean else f"http://{ref_clean}")
+        short_parsed = urlparse(shortener_clean if "://" in shortener_clean else f"http://{shortener_clean}")
+
+        ref_netloc = ref_parsed.netloc.lower().split(":")[0]
+        short_netloc = short_parsed.netloc.lower().split(":")[0]
+
+        if not ref_netloc or not short_netloc:
+            return False
+
+        # 1. Exact or subdomain match
+        if ref_netloc == short_netloc:
+            return True
+        if ref_netloc.endswith("." + short_netloc) or short_netloc.endswith("." + ref_netloc):
+            return True
+        if short_netloc in ref_netloc or ref_netloc in short_netloc:
+            return True
+
+        # 2. Root domain comparison
+        if check_referer_root(ref_netloc, short_netloc):
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
 @app.get("/{short_id}")
 async def original_shortlink(
     request: Request,
@@ -1322,17 +1361,21 @@ async def original_shortlink(
         await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         return RedirectResponse(url="/blocked", status_code=302)
 
-    # ============== REFERER/ORIGIN LOGGING (SUPPORTING SIGNAL) ==============
+    # ============== REFERER/ORIGIN VALIDATION ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
-    shortener_domain = urlparse(shortener_base_url).netloc.lower() if shortener_base_url else ""
 
-    referer_signal = "missing"
-    if referer:
-        ref_netloc = urlparse(referer).netloc.lower()
-        if shortener_domain and (shortener_domain in ref_netloc or check_referer_root(ref_netloc, shortener_domain)):
-            referer_signal = "shortener_match"
-        else:
-            referer_signal = "external_or_cross_origin"
+    if shortener_base_url:
+        if not is_valid_shortener_referer(referer, shortener_base_url):
+            ref_str = referer if referer else "Missing"
+            shortener_domain = urlparse(shortener_base_url).netloc or shortener_base_url
+            reason = f"Bypass detected: Missing or invalid Referer (expected '{shortener_domain}', got '{ref_str}')"
+
+            await db.users.update_one(
+                {"_id": user_id},
+                {"$inc": {"blocked_count": 1, "referer_failures": 1}}
+            )
+            await send_bypass_notification(user_id, short_id, reason, request, db)
+            return RedirectResponse(url="/blocked", status_code=302)
 
     # 2. Create a secure, short-lived server-side verification session with single-use token
     session_id = secrets.token_urlsafe(32)
@@ -1354,7 +1397,7 @@ async def original_shortlink(
         "status": "unused",
         "verified": True,
         "consumed": False,
-        "referer_signal": referer_signal,
+        "referer": referer,
         "mode": link.get("mode", "NORMAL"),
         "manual_min_seconds": link.get("manual_min_seconds"),
         "manual_max_seconds": link.get("manual_max_seconds")
