@@ -53,14 +53,26 @@ async def send_bot_msg(
     if images and len(text) <= 1024:
         photo_url = random.choice(images)
         try:
+            # Use URLInputFile so aiogram downloads the image file locally and uploads it as photo bytes,
+            # avoiding Telegram server-side URL fetch errors like "wrong type of the web page content"
+            photo_input = types.URLInputFile(photo_url)
             return await msg_obj.answer_photo(
-                photo=photo_url,
+                photo=photo_input,
                 caption=text,
                 parse_mode=parse_mode,
                 reply_markup=reply_markup
             )
         except Exception as e:
-            logger.warning(f"Failed to send photo ({photo_url}), falling back to text: {e}")
+            logger.warning(f"Failed to send URLInputFile photo ({photo_url}), trying raw string URL: {e}")
+            try:
+                return await msg_obj.answer_photo(
+                    photo=photo_url,
+                    caption=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup
+                )
+            except Exception as ex:
+                logger.warning(f"Failed to send photo ({photo_url}), falling back to text: {ex}")
 
     return await msg_obj.answer(
         text=text,
