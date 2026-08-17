@@ -40,6 +40,8 @@ async def get_active_banner_images() -> list[str]:
         images = settings.get_image_urls()
     return images
 
+import aiohttp
+
 async def fetch_valid_photo(images: list[str]) -> tuple[types.BufferedInputFile | str | None, str | None]:
     if not images:
         return None, None
@@ -48,19 +50,27 @@ async def fetch_valid_photo(images: list[str]) -> tuple[types.BufferedInputFile 
     shuffled = images.copy()
     random.shuffle(shuffled)
 
-    # Try up to 3 candidate URLs
-    for url in shuffled[:3]:
-        try:
-            async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=4.0) as client:
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    ct = resp.headers.get("content-type", "").lower()
-                    if "image" in ct or url.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
-                        filename = url.split("/")[-1].split("?")[0] or "banner.jpg"
-                        input_file = types.BufferedInputFile(resp.content, filename=filename)
-                        return input_file, url
-        except Exception:
-            pass
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            for url in shuffled[:5]:
+                try:
+                    async with session.get(url, timeout=4.0) as resp:
+                        if resp.status == 200:
+                            ct = resp.headers.get("content-type", "").lower()
+                            if "image" in ct or url.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+                                content = await resp.read()
+                                filename = url.split("/")[-1].split("?")[0] or "banner.jpg"
+                                input_file = types.BufferedInputFile(content, filename=filename)
+                                return input_file, url
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # If HTTP download failed or returned 404, fallback to passing raw URL directly
+    if shuffled:
+        fallback_url = shuffled[0]
+        return fallback_url, fallback_url
 
     return None, None
 

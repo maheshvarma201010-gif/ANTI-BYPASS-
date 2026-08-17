@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     BASE_URL: str = "https://antibypass.koyeb.app"
 
     # Admin IDs and Banner Images configuration from env or defaults
-    ADMIN_IDS: str = "8912467729"
-    IMAGE_URLS: str = "https://files.catbox.moe/2hc6j, https://files.catbox.moe/v16uq, https://files.catbox.moe/hpzl8, https://files.catbox.moe/qqrak, https://files.catbox.moe/47qut, https://files.catbox.moe/tywna, https://files.catbox.moe/hirxb, https://files.catbox.moe/01qpj, https://files.catbox.moe/tw7tn, https://files.catbox.moe/8orn2, https://files.catbox.moe/pid4n, https://files.catbox.moe/n5hpi, https://files.catbox.moe/o5hb1, https://files.catbox.moe/ptudv, https://files.catbox.moe/lalrd, https://files.catbox.moe/9aeh5"
+    ADMIN_IDS: str = ""
+    IMAGE_URLS: str = ""
 
     # Challenge settings
     CHALLENGE_EXPIRY_SECONDS: int = 60

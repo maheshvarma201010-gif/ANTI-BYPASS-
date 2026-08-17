@@ -881,17 +881,13 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         if base_parsed.netloc:
             app_netlocs.add(base_parsed.netloc.lower())
 
-    # Check for direct bypass tool Referers pointing to internal /continue or /blocked routes
+    # Check for direct bypass tool Referers pointing to internal /blocked routes
     if raw_referer:
         try:
             ref_parsed = urlparse(raw_referer)
             ref_path = ref_parsed.path.lower()
-            ref_netloc = ref_parsed.netloc.lower()
 
             if "/blocked" in ref_path:
-                return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
-
-            if "token=" in referer_dec and any(domain in ref_netloc for domain in app_netlocs if domain):
                 return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
         except Exception:
             pass
