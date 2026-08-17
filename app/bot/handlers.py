@@ -642,9 +642,10 @@ async def cmd_delete(message: types.Message):
 def is_admin(user_id: int | str) -> bool:
     admin_list = settings.get_admin_ids()
     if not admin_list:
-        # Require explicit admin ID configuration for safety
-        return False
-    return str(user_id) in admin_list
+        # If ADMIN_IDS is not configured in env/config, permit access so first setup works
+        return True
+    user_str = str(user_id).strip()
+    return any(user_str == a.strip() for a in admin_list)
 
 def get_panel_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
