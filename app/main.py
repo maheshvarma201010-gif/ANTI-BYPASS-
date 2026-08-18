@@ -1,6 +1,9 @@
+import logging
 from typing import Optional
 from bson import ObjectId
 from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query
+
+logger = logging.getLogger(__name__)
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
 from app.api.endpoints import router as api_router
@@ -946,7 +949,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         except Exception:
             pass
 
-    # Explicit userscript, bookmarklet (nicktrick), and bypass tool signatures
+    # Explicit userscript, bookmarklet (nicktrick), flow, and bypass tool signatures
     banned_keywords = [
         "nicktrick",
         "javascript:",
@@ -962,7 +965,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "document.write",
         "document.open",
         "ddxbypass",
-        "bypassbot"
+        "bypassbot",
+        "strict-origin-when-cross-origin",
+        "flow=",
+        "/verify/"
     ]
 
     for kw in banned_keywords:
@@ -971,7 +977,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         if kw in url_dec:
             return True, f"Banned userscript pattern '{kw}' detected in Request URL"
 
-    # Check query parameters specifically for nicktrick and userscript patterns
+    # Check query parameters specifically for nicktrick, flow, and userscript patterns
     banned_query_keywords = [
         "nicktrick",
         "javascript:",
@@ -982,7 +988,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "violentmonkey",
         "stealth final",
         "ddxbypass",
-        "bypassbot"
+        "bypassbot",
+        "flow",
+        "strict-origin-when-cross-origin"
     ]
 
     for k, v in request.query_params.items():
