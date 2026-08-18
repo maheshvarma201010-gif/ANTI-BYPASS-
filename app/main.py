@@ -1001,6 +1001,28 @@ GATEWAY_TEMPLATE = """
                 return null;
             }
 
+            function getCanvasFingerprint() {
+                try {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    ctx.textBaseline = "top";
+                    ctx.font = "14px 'Arial'";
+                    ctx.fillStyle = "#f60";
+                    ctx.fillRect(125, 1, 62, 20);
+                    ctx.fillStyle = "#069";
+                    ctx.fillText("AntiBypassFingerprint,😃", 2, 15);
+                    const str = canvas.toDataURL();
+                    let hash = 0;
+                    for (let i = 0; i < str.length; i++) {
+                        hash = (hash << 5) - hash + str.charCodeAt(i);
+                        hash |= 0;
+                    }
+                    return "fp_" + Math.abs(hash).toString(16);
+                } catch(e) {
+                    return "fp_none";
+                }
+            }
+
             const automationReason = detectAutomationAndFingerprint();
             if (automationReason) {
                 reportViolation(automationReason);
@@ -1011,11 +1033,12 @@ GATEWAY_TEMPLATE = """
                 return;
             }
 
-            // Run instant backend verification launch
+            // Run instant backend verification launch with canvas fingerprint
             try {
                 if (!tamperingDetected) {
+                    const fp = getCanvasFingerprint();
                     const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
-                    nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE));
+                    nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE) + "&fp=" + encodeURIComponent(fp));
                 }
             } catch (e) {
                 showError("Verification Failure", "Redirection failed. Please reload the page.");
@@ -1774,24 +1797,42 @@ async def original_shortlink(
             )
             return RedirectResponse(url="/blocked", status_code=302)
 
-    # ============== REFERER/ORIGIN VALIDATION ==============
-    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
-
-    if not referer or not referer.strip():
-        if strict_ref_enabled or shortener_base_url:
+    # Rate limiting on token generation per IP (max 10 token requests per 60s)
+    if client_ip and client_ip != "unknown":
+        recent_tokens_count = await db.sessions.count_documents({
+            "client_ip": client_ip,
+            "created_at": {"$gte": time.time() - 60}
+        })
+        if recent_tokens_count >= 10:
             await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
-            await db.users.update_one(
-                {"_id": user_id},
-                {"$inc": {"blocked_count": 1, "referer_failures": 1}}
-            )
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(
                 user_id,
                 short_id,
-                "Bypass Blocked: Empty or missing Referer header on shortlink",
+                f"Rate Limit Exceeded: Too many token generation attempts ({recent_tokens_count} requests in 60s from {client_ip})",
                 request,
                 db
             )
             return RedirectResponse(url="/blocked", status_code=302)
+
+    # ============== REFERER/ORIGIN VALIDATION ==============
+    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+
+    # Strict Empty Referer Enforcement: Block all requests without a valid Referer header
+    if not referer or not referer.strip():
+        await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
+        await db.users.update_one(
+            {"_id": user_id},
+            {"$inc": {"blocked_count": 1, "referer_failures": 1}}
+        )
+        await send_bypass_notification(
+            user_id,
+            short_id,
+            "Bypass Blocked: Empty or missing Referer header on shortlink",
+            request,
+            db
+        )
+        return RedirectResponse(url="/blocked", status_code=302)
 
     if shortener_base_url:
         if not is_valid_shortener_referer(referer, shortener_base_url):
