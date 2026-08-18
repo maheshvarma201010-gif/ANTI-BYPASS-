@@ -1203,7 +1203,12 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "bypassbot",
         "strict-origin-when-cross-origin",
         "flow=",
-        "/verify/"
+        "/verify/",
+        "eval(",
+        "decodeuricomponent",
+        "<script",
+        "<style>",
+        "<a id="
     ]
 
     for kw in banned_keywords:
@@ -1225,7 +1230,13 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "ddxbypass",
         "bypassbot",
         "flow",
-        "strict-origin-when-cross-origin"
+        "strict-origin-when-cross-origin",
+        "eval",
+        "decodeuricomponent",
+        "<script",
+        "document.write",
+        "document.open",
+        "top!==self"
     ]
 
     for k, v in request.query_params.items():
