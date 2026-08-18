@@ -11,6 +11,54 @@ from app.models.database import connect_to_mongo, close_mongo_connection, get_da
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
 
+import base64
+import re
+from urllib.parse import unquote
+
+def deep_url_inspect(raw_str: str) -> tuple[bool, str]:
+    if not raw_str:
+        return False, ""
+
+    if "\x00" in raw_str or "%00" in raw_str:
+        return True, "Null byte (%00) detected"
+
+    for char_code in range(1, 32):
+        if chr(char_code) in raw_str:
+            return True, f"Control character 0x{char_code:02x} detected"
+
+    curr = raw_str
+    decoded_variants = [curr]
+    for _ in range(5):
+        try:
+            nxt = unquote(curr)
+            if nxt == curr:
+                break
+            curr = nxt
+            decoded_variants.append(curr)
+        except Exception:
+            break
+
+    full_text = " ".join(decoded_variants).lower()
+
+    if "data:text/html" in full_text:
+        return True, "Dangerous data:text/html URI scheme detected"
+    if "blob:" in full_text:
+        return True, "blob: URI scheme redirect detected"
+    if "about:blank" in full_text:
+        return True, "about:blank redirect scheme detected"
+
+    b64_matches = re.findall(r'[A-Za-z0-9+/]{20,}={0,2}', raw_str)
+    for match in b64_matches:
+        try:
+            decoded = base64.b64decode(match).decode('utf-8', errors='ignore').lower()
+            if any(k in decoded for k in ["nicktrick", "javascript:", "document.write", "document.open", "top!==self", "data:text/html"]):
+                return True, f"Base64 encoded malicious payload detected ('{match[:15]}...')"
+        except Exception:
+            pass
+
+    return False, ""
+
+
 def safe_object_id(val):
     if not val:
         return None
@@ -45,13 +93,40 @@ async def security_firewall_middleware(request: Request, call_next):
     is_bypass = False
     bypass_reason = ""
 
-    for k, v in request.query_params.items():
-        k_dec = unquote(unquote(k)).lower()
-        v_dec = unquote(unquote(v)).lower()
-        if "nicktrick" in k_dec or "nicktrick" in v_dec:
+    if len(request.query_params) > 10:
+        is_bypass = True
+        bypass_reason = f"Excessive query parameter count detected ({len(request.query_params)} > 10)"
+
+    if not is_bypass:
+        bad_url, url_reason = deep_url_inspect(raw_url)
+        if bad_url:
             is_bypass = True
-            bypass_reason = f"NickTrick exploit parameter detected in query string ({k})"
-            break
+            bypass_reason = f"Request URL deep inspection failure ({url_reason})"
+
+    if not is_bypass and raw_referer:
+        bad_ref, ref_reason = deep_url_inspect(raw_referer)
+        if bad_ref:
+            is_bypass = True
+            bypass_reason = f"Referer header deep inspection failure ({ref_reason})"
+
+    if not is_bypass:
+        for k, v in request.query_params.items():
+            k_dec = unquote(unquote(k)).lower()
+            v_dec = unquote(unquote(v)).lower()
+            if "nicktrick" in k_dec or "nicktrick" in v_dec:
+                is_bypass = True
+                bypass_reason = f"NickTrick exploit parameter detected in query string ({k})"
+                break
+            bad_k, k_reason = deep_url_inspect(k)
+            if bad_k:
+                is_bypass = True
+                bypass_reason = f"Query key deep inspection failure ({k_reason})"
+                break
+            bad_v, v_reason = deep_url_inspect(v)
+            if bad_v:
+                is_bypass = True
+                bypass_reason = f"Query value deep inspection failure ({v_reason})"
+                break
 
     if not is_bypass:
         if "nicktrick" in referer_dec:
@@ -78,9 +153,11 @@ async def security_firewall_middleware(request: Request, call_next):
             if db is not None:
                 token = request.query_params.get("token")
                 path_parts = path.strip("/").split("/")
-                short_id = path_parts[0] if len(path_parts) > 0 and path_parts[0] not in ["blocked", "continue", "redirect", "health", "api", "st"] else None
-                if not short_id and len(path_parts) >= 2 and path_parts[0] == "verify":
+                short_id = None
+                if len(path_parts) >= 2 and path_parts[0] == "verify":
                     short_id = path_parts[1]
+                elif len(path_parts) == 1 and path_parts[0] not in ["blocked", "continue", "redirect", "health", "api", "st", "verify", "docs", "redoc", "openapi.json", "favicon.ico"]:
+                    short_id = path_parts[0]
 
                 user_id = None
                 if token:
@@ -888,6 +965,33 @@ GATEWAY_TEMPLATE = """
                 return;
             }
 
+            // Browser Automation & Bot Fingerprint Inspection
+            function detectAutomationAndFingerprint() {
+                if (navigator.webdriver) {
+                    return "Automated browser detected via navigator.webdriver";
+                }
+                if (window.callPhantom || window._phantom || window.__nightmare || window.Cypress || window.domAutomation || window.domAutomationController) {
+                    return "Headless browser framework detected";
+                }
+                if (window.outerWidth === 0 && window.outerHeight === 0) {
+                    return "Headless browser dimensions (0x0) detected";
+                }
+                if (screen.width === 800 && screen.height === 600 && !navigator.userAgent.includes("Mobile")) {
+                    return "Bot default resolution (800x600) detected";
+                }
+                return null;
+            }
+
+            const automationReason = detectAutomationAndFingerprint();
+            if (automationReason) {
+                reportViolation(automationReason);
+                showError(
+                    "Automated Access Blocked",
+                    "Automated browser framework or bot environment was detected. Redirection is blocked."
+                );
+                return;
+            }
+
             // Run instant backend verification launch
             try {
                 if (!tamperingDetected) {
@@ -940,7 +1044,8 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
         "puppeteer", "playwright", "python", "curl", "wget", "go-http-client",
         "axios", "node-fetch", "urllib", "aiohttp", "httpx", "postman",
         "insomnia", "bypass", "ddxbypass", "bypassbot", "checker", "scraper",
-        "tampermonkey", "greasyfork", "violentmonkey", "nicktrick"
+        "tampermonkey", "greasyfork", "violentmonkey", "nicktrick",
+        "phantomjs", "headlesschrome", "rhino", "htmlunit", "webdriver", "electron"
     ]
 
     for kw in bot_keywords:
