@@ -24,6 +24,108 @@ def safe_object_id(val):
 app = FastAPI(title=settings.PROJECT_NAME)
 
 
+@app.middleware("http")
+async def security_firewall_middleware(request: Request, call_next):
+    path = request.url.path.lower()
+    if path in ["/blocked", "/health"]:
+        response = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+        return response
+
+    from urllib.parse import unquote
+    raw_referer = request.headers.get("referer", "")
+    referer_dec = unquote(unquote(raw_referer)).lower()
+    raw_url = str(request.url)
+    url_dec = unquote(unquote(raw_url)).lower()
+    user_agent = request.headers.get("user-agent", "")
+    client_ip = get_client_ip(request)
+
+    is_bypass = False
+    bypass_reason = ""
+
+    for k, v in request.query_params.items():
+        k_dec = unquote(unquote(k)).lower()
+        v_dec = unquote(unquote(v)).lower()
+        if "nicktrick" in k_dec or "nicktrick" in v_dec:
+            is_bypass = True
+            bypass_reason = f"NickTrick exploit parameter detected in query string ({k})"
+            break
+
+    if not is_bypass:
+        if "nicktrick" in referer_dec:
+            is_bypass = True
+            bypass_reason = "NickTrick exploit detected in Referer header"
+        elif "nicktrick" in url_dec:
+            is_bypass = True
+            bypass_reason = "NickTrick exploit detected in Request URL"
+
+    if not is_bypass:
+        is_bot, bot_reason = is_bot_user_agent(user_agent)
+        if is_bot:
+            is_bypass = True
+            bypass_reason = f"Suspicious or empty User-Agent detected ({bot_reason})"
+
+    if not is_bypass:
+        is_bypass, bypass_reason = detect_userscript_bypass(request)
+
+    if is_bypass:
+        logger.warning(f"🛡️ FIREWALL BLOCKED ATTEMPT: IP={client_ip}, UA='{user_agent}', Reason='{bypass_reason}', URL='{raw_url}'")
+
+        try:
+            db = get_database()
+            if db is not None:
+                token = request.query_params.get("token")
+                path_parts = path.strip("/").split("/")
+                short_id = path_parts[0] if len(path_parts) > 0 and path_parts[0] not in ["blocked", "continue", "redirect", "health", "api", "st"] else None
+                if not short_id and len(path_parts) >= 2 and path_parts[0] == "verify":
+                    short_id = path_parts[1]
+
+                user_id = None
+                if token:
+                    sess = await db.sessions.find_one({"token": token})
+                    if sess:
+                        await db.sessions.update_one({"_id": sess["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+                        if sess.get("user_id"):
+                            user_id = safe_object_id(sess["user_id"])
+                        if not short_id:
+                            short_id = sess.get("short_id")
+
+                if not user_id and short_id:
+                    link = await db.protected_links.find_one({"short_id": short_id})
+                    if link and link.get("user_id"):
+                        user_id = safe_object_id(link["user_id"])
+                    else:
+                        sess = await db.sessions.find_one({"short_id": short_id})
+                        if sess and sess.get("user_id"):
+                            user_id = safe_object_id(sess["user_id"])
+
+                if user_id:
+                    await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                    await send_bypass_notification(
+                        user_id,
+                        short_id or "unknown",
+                        f"Firewall Blocked Exploit Attempt ({bypass_reason})",
+                        request,
+                        db
+                    )
+        except Exception as exc:
+            logger.error(f"Error in security firewall middleware handling: {exc}")
+
+        response = RedirectResponse(url="/blocked", status_code=302)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+        return response
+
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+    return response
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     path_parts = request.url.path.strip("/").split("/")
