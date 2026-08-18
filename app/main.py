@@ -1,7 +1,11 @@
 import time
 import logging
+import html
+import base64
+import re
 from typing import Optional
 from bson import ObjectId
+from urllib.parse import unquote, urlparse
 from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query
 
 logger = logging.getLogger(__name__)
@@ -11,10 +15,6 @@ from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
-
-import base64
-import re
-from urllib.parse import unquote
 
 def get_client_ip(request: Request) -> str:
     cf_ip = request.headers.get("cf-connecting-ip")
@@ -29,6 +29,23 @@ def get_client_ip(request: Request) -> str:
 
     return request.client.host if request.client else "unknown"
 
+def deep_multi_unescape(raw_str: str, max_depth: int = 5) -> list[str]:
+    if not raw_str:
+        return []
+    variants = [raw_str]
+    curr = raw_str
+    for _ in range(max_depth):
+        try:
+            unquoted = unquote(curr)
+            unescaped = html.unescape(unquoted)
+            if unescaped == curr:
+                break
+            curr = unescaped
+            variants.append(curr)
+        except Exception:
+            break
+    return variants
+
 def deep_url_inspect(raw_str: str) -> tuple[bool, str]:
     if not raw_str:
         return False, ""
@@ -40,18 +57,7 @@ def deep_url_inspect(raw_str: str) -> tuple[bool, str]:
         if chr(char_code) in raw_str:
             return True, f"Control character 0x{char_code:02x} detected"
 
-    curr = raw_str
-    decoded_variants = [curr]
-    for _ in range(5):
-        try:
-            nxt = unquote(curr)
-            if nxt == curr:
-                break
-            curr = nxt
-            decoded_variants.append(curr)
-        except Exception:
-            break
-
+    decoded_variants = deep_multi_unescape(raw_str, max_depth=5)
     full_text = " ".join(decoded_variants).lower()
 
     if "data:text/html" in full_text:
@@ -984,6 +990,28 @@ GATEWAY_TEMPLATE = """
                 return;
             }
 
+            // JS inspection for external domain parameter payloads in location search
+            try {
+                if (window.location.search) {
+                    const search = window.location.search.toLowerCase();
+                    if (search.includes("http://") || search.includes("https://")) {
+                        const currentHost = window.location.host.toLowerCase();
+                        const matches = search.match(/https?:\\/\\/[^ \t\r\n&"']+/g) || [];
+                        for (let i = 0; i < matches.length; i++) {
+                            try {
+                                const parsed = new URL(matches[i]);
+                                if (parsed.host && parsed.host.toLowerCase() !== currentHost) {
+                                    reportViolation("External domain parameter detected in address bar query (" + parsed.host + ")");
+                                    showError("Unauthorized External Domain", "An unauthorized external domain parameter payload was detected.");
+                                    window.location.replace("/blocked");
+                                    return;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+                }
+            } catch(e) {}
+
             // Browser Automation & Bot Fingerprint Inspection
             function detectAutomationAndFingerprint() {
                 if (navigator.webdriver) {
@@ -1211,10 +1239,13 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "<a id="
     ]
 
+    referer_text = " ".join([v.lower() for v in deep_multi_unescape(raw_referer)])
+    url_text = " ".join([v.lower() for v in deep_multi_unescape(raw_url)])
+
     for kw in banned_keywords:
-        if kw in referer_dec:
+        if kw in referer_text:
             return True, f"Banned userscript pattern '{kw}' detected in Referer"
-        if kw in url_dec:
+        if kw in url_text:
             return True, f"Banned userscript pattern '{kw}' detected in Request URL"
 
     # Check query parameters specifically for nicktrick, flow, and userscript patterns
@@ -1240,17 +1271,30 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     ]
 
     for k, v in request.query_params.items():
-        k_dec = unquote(unquote(k)).lower()
-        v_dec = unquote(unquote(v)).lower()
+        full_k = " ".join([x.lower() for x in deep_multi_unescape(k)])
+        full_v = " ".join([x.lower() for x in deep_multi_unescape(v)])
 
-        if k_dec == "nicktrick" or "nicktrick" in k_dec or "nicktrick" in v_dec:
+        if "nicktrick" in full_k or "nicktrick" in full_v:
             return True, "NickTrick parameter detected in query string"
 
-        if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
+        if ("bypass" in full_k or "bypass" in full_v) and ("anti-bypass" not in full_k and "anti-bypass" not in full_v):
             return True, "Bypass query parameter pattern detected"
 
+        # Check for external domain URLs in query parameters
+        if "http://" in full_v or "https://" in full_v:
+            try:
+                urls_found = re.findall(r'https?://[^\s&"\'<>]+', full_v)
+                app_netloc = request.base_url.netloc.lower() if (request.base_url and request.base_url.netloc) else ""
+                for found_u in urls_found:
+                    parsed_found = urlparse(found_u)
+                    found_netloc = parsed_found.netloc.lower()
+                    if found_netloc and app_netloc and found_netloc != app_netloc and not check_referer_root(found_netloc, app_netloc):
+                        return True, f"External domain URL parameter detected ({found_netloc})"
+            except Exception:
+                pass
+
         for kw in banned_query_keywords:
-            if kw in k_dec or kw in v_dec:
+            if kw in full_k or kw in full_v:
                 return True, f"Banned userscript pattern '{kw}' detected in query parameters"
 
     # Bot User-Agent detection
