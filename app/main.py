@@ -1,12 +1,67 @@
 from typing import Optional
+from bson import ObjectId
 from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
 from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
 
+def safe_object_id(val):
+    if not val:
+        return None
+    if isinstance(val, ObjectId):
+        return val
+    try:
+        return ObjectId(str(val))
+    except Exception:
+        return None
+
 app = FastAPI(title=settings.PROJECT_NAME)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    path_parts = request.url.path.strip("/").split("/")
+    short_id = None
+    if len(path_parts) >= 2 and path_parts[0] == "verify":
+        short_id = path_parts[1]
+    elif len(path_parts) == 1 and path_parts[0] not in ["blocked", "continue", "redirect", "health", "api", "st", "docs", "redoc", "openapi.json", "favicon.ico"]:
+        short_id = path_parts[0]
+
+    if short_id:
+        try:
+            db = get_database()
+            if db is not None:
+                user_id = None
+                link = await db.protected_links.find_one({"short_id": short_id})
+                if link and link.get("user_id"):
+                    user_id = safe_object_id(link["user_id"])
+                else:
+                    session = await db.sessions.find_one({"short_id": short_id})
+                    if session and session.get("user_id"):
+                        user_id = safe_object_id(session["user_id"])
+                    else:
+                        redirect_doc = await db.redirects.find_one({"short_id": short_id})
+                        if redirect_doc and redirect_doc.get("user_id"):
+                            user_id = safe_object_id(redirect_doc["user_id"])
+
+                if user_id:
+                    await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                    await send_bypass_notification(
+                        user_id,
+                        short_id,
+                        "Bypass / Tubing validation error intercepted (missing or invalid parameter)",
+                        request,
+                        db
+                    )
+        except Exception as e:
+            logger.error(f"Error handling validation exception for short_id {short_id}: {e}")
+
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
 app.include_router(api_router)
@@ -25,7 +80,6 @@ import base64
 from fastapi.responses import RedirectResponse
 from urllib.parse import urlparse
 from app.core.referer import is_allowed_referer, is_related_domain, is_whitelisted_user, is_development_environment, get_user_verification_history, is_legitimate_no_referer
-from bson import ObjectId
 
 BYPASS_DETECTED_TEMPLATE = """
 <!DOCTYPE html>
@@ -1405,6 +1459,44 @@ def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
         return False
     except Exception:
         return False
+
+
+@app.get("/verify/{short_id}")
+@app.post("/verify/{short_id}")
+async def verify_bypass_endpoint(
+    request: Request,
+    short_id: str,
+    nonce: str = Query(..., min_length=1),
+    flow: Optional[str] = Query(None),
+    db = Depends(get_database)
+):
+    try:
+        user_id = None
+        link = await db.protected_links.find_one({"short_id": short_id})
+        if link and link.get("user_id"):
+            user_id = safe_object_id(link["user_id"])
+        else:
+            session = await db.sessions.find_one({"short_id": short_id})
+            if session and session.get("user_id"):
+                user_id = safe_object_id(session["user_id"])
+            else:
+                redirect_doc = await db.redirects.find_one({"short_id": short_id})
+                if redirect_doc and redirect_doc.get("user_id"):
+                    user_id = safe_object_id(redirect_doc["user_id"])
+
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(
+                user_id,
+                short_id,
+                "Instant Bypass/Tubing URL Intercepted (/verify route)",
+                request,
+                db
+            )
+    except Exception as e:
+        logger.error(f"Error handling verify bypass endpoint for short_id {short_id}: {e}")
+
+    return RedirectResponse(url="/blocked", status_code=302)
 
 
 @app.get("/{short_id}")
