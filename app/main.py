@@ -1747,8 +1747,46 @@ async def original_shortlink(
         await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         return RedirectResponse(url="/blocked", status_code=302)
 
+    # Read security configuration toggles
+    cfg = await db.settings.find_one({"key": "security_config"}) or {}
+    strict_ref_enabled = cfg.get("strict_referer_enabled", True)
+    max_3_fails_enabled = cfg.get("max_3_fails_enabled", True)
+
+    # Failed attempt tracking per IP (after 3 failed attempts block)
+    if max_3_fails_enabled and client_ip and client_ip != "unknown":
+        ip_failed_count = await db.ip_failures.count_documents({
+            "ip": client_ip,
+            "created_at": {"$gte": time.time() - 3600}
+        })
+        if ip_failed_count >= 3:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(
+                user_id,
+                short_id,
+                f"IP Blocked: Max 3 failed verification threshold reached ({ip_failed_count} failures from {client_ip})",
+                request,
+                db
+            )
+            return RedirectResponse(url="/blocked", status_code=302)
+
     # ============== REFERER/ORIGIN VALIDATION ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+
+    if not referer or not referer.strip():
+        if strict_ref_enabled or shortener_base_url:
+            await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
+            await db.users.update_one(
+                {"_id": user_id},
+                {"$inc": {"blocked_count": 1, "referer_failures": 1}}
+            )
+            await send_bypass_notification(
+                user_id,
+                short_id,
+                "Bypass Blocked: Empty or missing Referer header on shortlink",
+                request,
+                db
+            )
+            return RedirectResponse(url="/blocked", status_code=302)
 
     if shortener_base_url:
         if not is_valid_shortener_referer(referer, shortener_base_url):
@@ -1756,6 +1794,7 @@ async def original_shortlink(
             shortener_domain = urlparse(shortener_base_url).netloc or shortener_base_url
             reason = f"Bypass detected: Missing or invalid Referer (expected '{shortener_domain}', got '{ref_str}')"
 
+            await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
             await db.users.update_one(
                 {"_id": user_id},
                 {"$inc": {"blocked_count": 1, "referer_failures": 1}}
