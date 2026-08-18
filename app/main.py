@@ -1299,6 +1299,14 @@ async def continue_endpoint(
 
     referer = request.headers.get("referer", "")
 
+    # Empty Referer check on /continue: Bookmarklets strip referer
+    if not referer or not referer.strip():
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1, "referer_failures": 1}})
+            await send_bypass_notification(user_id, short_id, "Bypass Blocked: Empty or missing Referer on /continue route", request, db)
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        return RedirectResponse(url="/blocked", status_code=302)
+
     # Check for explicit userscript/bypass tool indicators
     is_bypass, bypass_reason = detect_userscript_bypass(request)
 
@@ -1309,6 +1317,23 @@ async def continue_endpoint(
         # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return RedirectResponse(url="/blocked", status_code=302)
+
+    # Validate continuation referer against stored initial session referer
+    initial_referer = session.get("referer", "")
+    if initial_referer:
+        try:
+            ref_parsed = urlparse(referer)
+            init_parsed = urlparse(initial_referer)
+            app_parsed = urlparse(str(request.base_url))
+            if ref_parsed.netloc and init_parsed.netloc and ref_parsed.netloc.lower() != app_parsed.netloc.lower():
+                if not check_referer_root(ref_parsed.netloc, init_parsed.netloc):
+                    if user_id:
+                        await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1, "referer_failures": 1}})
+                        await send_bypass_notification(user_id, short_id, f"Bypass Blocked: Continuation referer mismatch (expected '{init_parsed.netloc}', got '{ref_parsed.netloc}')", request, db)
+                    await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+                    return RedirectResponse(url="/blocked", status_code=302)
+        except Exception:
+            pass
 
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
@@ -1890,7 +1915,12 @@ async def original_shortlink(
     )
 
     # 3. Set the session ID cookie and redirect to continuation endpoint
-    response = RedirectResponse(url=f"/continue?token={token}", status_code=302)
+    import hmac
+    import hashlib
+    sig_message = f"{token}:{short_id}"
+    hmac_sig = hmac.new(settings.SECRET_KEY.encode(), sig_message.encode(), hashlib.sha256).hexdigest()
+
+    response = RedirectResponse(url=f"/continue?token={token}&sig={hmac_sig}", status_code=302)
     is_secure = request.url.scheme == "https"
     response.set_cookie(
         key="session_id",
