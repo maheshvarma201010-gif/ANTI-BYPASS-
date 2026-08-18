@@ -1,3 +1,4 @@
+import time
 import logging
 from typing import Optional
 from bson import ObjectId
@@ -14,6 +15,19 @@ from app.core.referer import get_bridge_page_html, handle_validation
 import base64
 import re
 from urllib.parse import unquote
+
+def get_client_ip(request: Request) -> str:
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip.strip()
+
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        parts = xff.split(",")
+        if parts:
+            return parts[0].strip()
+
+    return request.client.host if request.client else "unknown"
 
 def deep_url_inspect(raw_str: str) -> tuple[bool, str]:
     if not raw_str:
@@ -74,7 +88,8 @@ app = FastAPI(title=settings.PROJECT_NAME)
 
 @app.middleware("http")
 async def security_firewall_middleware(request: Request, call_next):
-    path = request.url.path.lower()
+    raw_path = request.url.path
+    path = raw_path.lower()
     if path in ["/blocked", "/health"]:
         response = await call_next(request)
         response.headers["X-Frame-Options"] = "DENY"
@@ -152,12 +167,14 @@ async def security_firewall_middleware(request: Request, call_next):
             db = get_database()
             if db is not None:
                 token = request.query_params.get("token")
-                path_parts = path.strip("/").split("/")
+                raw_path_parts = raw_path.strip("/").split("/")
+                path_parts_lower = path.strip("/").split("/")
+
                 short_id = None
-                if len(path_parts) >= 2 and path_parts[0] == "verify":
-                    short_id = path_parts[1]
-                elif len(path_parts) == 1 and path_parts[0] not in ["blocked", "continue", "redirect", "health", "api", "st", "verify", "docs", "redoc", "openapi.json", "favicon.ico"]:
-                    short_id = path_parts[0]
+                if len(raw_path_parts) >= 2 and path_parts_lower[0] == "verify":
+                    short_id = raw_path_parts[1]
+                elif len(raw_path_parts) == 1 and path_parts_lower[0] not in ["blocked", "continue", "redirect", "health", "api", "st", "verify", "docs", "redoc", "openapi.json", "favicon.ico"]:
+                    short_id = raw_path_parts[0]
 
                 user_id = None
                 if token:
@@ -205,12 +222,14 @@ async def security_firewall_middleware(request: Request, call_next):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    path_parts = request.url.path.strip("/").split("/")
+    raw_path_parts = request.url.path.strip("/").split("/")
+    path_parts_lower = request.url.path.lower().strip("/").split("/")
+
     short_id = None
-    if len(path_parts) >= 2 and path_parts[0] == "verify":
-        short_id = path_parts[1]
-    elif len(path_parts) == 1 and path_parts[0] not in ["blocked", "continue", "redirect", "health", "api", "st", "docs", "redoc", "openapi.json", "favicon.ico"]:
-        short_id = path_parts[0]
+    if len(raw_path_parts) >= 2 and path_parts_lower[0] == "verify":
+        short_id = raw_path_parts[1]
+    elif len(raw_path_parts) == 1 and path_parts_lower[0] not in ["blocked", "continue", "redirect", "health", "api", "st", "verify", "docs", "redoc", "openapi.json", "favicon.ico"]:
+        short_id = raw_path_parts[0]
 
     if short_id:
         try:
@@ -1014,20 +1033,6 @@ import html
 
 logger = logging.getLogger(__name__)
 
-def get_client_ip(request: Request) -> str:
-    # Check Cloudflare
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
-
-    # Check X-Forwarded-For
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        parts = xff.split(",")
-        if parts:
-            return parts[0].strip()
-
-    return request.client.host if request.client else "unknown"
 
 def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
     if not user_agent or not user_agent.strip():
