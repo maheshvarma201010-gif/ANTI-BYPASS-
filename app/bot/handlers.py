@@ -109,6 +109,12 @@ class ConnectStates(StatesGroup):
     waiting_for_manual_start_time = State()
     waiting_for_manual_end_time = State()
     waiting_for_admin_images = State()
+    waiting_for_cf_site_key = State()
+    waiting_for_cf_secret_key = State()
+    waiting_for_recaptcha_v2_site_key = State()
+    waiting_for_recaptcha_v2_secret_key = State()
+    waiting_for_recaptcha_v3_site_key = State()
+    waiting_for_recaptcha_v3_secret_key = State()
 
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -647,8 +653,27 @@ def is_admin(user_id: int | str) -> bool:
     user_str = str(user_id).strip()
     return any(user_str == a.strip() for a in admin_list)
 
-def get_panel_keyboard():
+async def get_panel_keyboard():
+    db = get_database()
+    cfg = await db.settings.find_one({"key": "security_config"}) or {}
+    cf_enabled = cfg.get("cloudflare_enabled", False)
+    re_v2_enabled = cfg.get("recaptcha_v2_enabled", False)
+    re_v3_enabled = cfg.get("recaptcha_v3_enabled", False)
+    strict_ref = cfg.get("strict_referer_enabled", True)
+    max_3_fails = cfg.get("max_3_fails_enabled", True)
+
     return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"{'✅' if cf_enabled else '❌'} Cloudflare Turnstile", callback_data="panel_toggle_cf"),
+            InlineKeyboardButton(text=f"{'✅' if re_v2_enabled else '❌'} reCAPTCHA v2", callback_data="panel_toggle_recaptcha_v2")
+        ],
+        [
+            InlineKeyboardButton(text=f"{'✅' if re_v3_enabled else '❌'} reCAPTCHA v3", callback_data="panel_toggle_recaptcha_v3"),
+            InlineKeyboardButton(text=f"{'✅' if strict_ref else '❌'} Strict Referer", callback_data="panel_toggle_strict_ref")
+        ],
+        [
+            InlineKeyboardButton(text=f"{'✅' if max_3_fails else '❌'} Max 3 Failed Block", callback_data="panel_toggle_max_fails")
+        ],
         [
             InlineKeyboardButton(text="🖼️ View Images", callback_data="panel_view_images"),
             InlineKeyboardButton(text="➕ Add Bulk Images", callback_data="panel_add_images")
@@ -669,13 +694,225 @@ async def cmd_panel(message: types.Message):
 
     images = await get_active_banner_images()
     count = len(images)
+    db = get_database()
+    cfg = await db.settings.find_one({"key": "security_config"}) or {}
+
     panel_text = (
-        "<b>⚡ Admin Panel & Banner Manager</b>\n\n"
-        f"<blockquote>• <b>Total Banner Images:</b> <code>{count}</code>\n"
-        f"• <b>Status:</b> {'Active (Randomly Selected)' if count > 0 else 'No Images (Text Only Mode)'}</blockquote>\n\n"
-        "<i>Select an option below to manage banner URLs:</i>"
+        "<b>⚡ Admin Security Panel & Protection Controls</b>\n\n"
+        f"<blockquote>• <b>Cloudflare Turnstile:</b> {'Enabled' if cfg.get('cloudflare_enabled', False) else 'Disabled'}\n"
+        f"• <b>reCAPTCHA v2 (I am not a robot):</b> {'Enabled' if cfg.get('recaptcha_v2_enabled', False) else 'Disabled'}\n"
+        f"• <b>reCAPTCHA v3:</b> {'Enabled' if cfg.get('recaptcha_v3_enabled', False) else 'Disabled'}\n"
+        f"• <b>Strict Referer Enforcement:</b> {'Enabled' if cfg.get('strict_referer_enabled', True) else 'Disabled'}\n"
+        f"• <b>Max 3 Failed Attempts Block:</b> {'Enabled' if cfg.get('max_3_fails_enabled', True) else 'Disabled'}\n"
+        f"• <b>Banner Images:</b> <code>{count}</code></blockquote>\n\n"
+        "<i>Click buttons below to toggle security verification methods on/off:</i>"
     )
-    await send_bot_msg(message, panel_text, reply_markup=get_panel_keyboard())
+    keyboard = await get_panel_keyboard()
+    await send_bot_msg(message, panel_text, reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("panel_toggle_"))
+async def cb_panel_toggle_security(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await safe_callback_answer(callback, "Unauthorized", show_alert=True)
+        return
+
+    action = callback.data
+    db = get_database()
+    cfg = await db.settings.find_one({"key": "security_config"}) or {}
+
+    if action == "panel_toggle_cf":
+        if cfg.get("cloudflare_enabled", False):
+            await db.settings.update_one(
+                {"key": "security_config"},
+                {"$set": {"cloudflare_enabled": False, "updated_at": datetime.utcnow()}},
+                upsert=True
+            )
+            keyboard = await get_panel_keyboard()
+            await send_bot_msg(callback, "<b>❌ Cloudflare Turnstile Disabled</b>", reply_markup=keyboard)
+        else:
+            await state.set_state(ConnectStates.waiting_for_cf_site_key)
+            await send_bot_msg(
+                callback,
+                "<b>🔑 Step 1: Enter Cloudflare Turnstile Site Key</b>\n\n"
+                "<blockquote>Please send your Cloudflare Turnstile Site Key.</blockquote>"
+            )
+        await safe_callback_answer(callback)
+        return
+
+    if action == "panel_toggle_recaptcha_v2":
+        if cfg.get("recaptcha_v2_enabled", False):
+            await db.settings.update_one(
+                {"key": "security_config"},
+                {"$set": {"recaptcha_v2_enabled": False, "updated_at": datetime.utcnow()}},
+                upsert=True
+            )
+            keyboard = await get_panel_keyboard()
+            await send_bot_msg(callback, "<b>❌ reCAPTCHA v2 Disabled</b>", reply_markup=keyboard)
+        else:
+            await state.set_state(ConnectStates.waiting_for_recaptcha_v2_site_key)
+            await send_bot_msg(
+                callback,
+                "<b>🔑 Step 1: Enter reCAPTCHA v2 Site Key</b>\n\n"
+                "<blockquote>Please send your reCAPTCHA v2 (I am not a robot) Site Key.</blockquote>"
+            )
+        await safe_callback_answer(callback)
+        return
+
+    if action == "panel_toggle_recaptcha_v3":
+        if cfg.get("recaptcha_v3_enabled", False):
+            await db.settings.update_one(
+                {"key": "security_config"},
+                {"$set": {"recaptcha_v3_enabled": False, "updated_at": datetime.utcnow()}},
+                upsert=True
+            )
+            keyboard = await get_panel_keyboard()
+            await send_bot_msg(callback, "<b>❌ reCAPTCHA v3 Disabled</b>", reply_markup=keyboard)
+        else:
+            await state.set_state(ConnectStates.waiting_for_recaptcha_v3_site_key)
+            await send_bot_msg(
+                callback,
+                "<b>🔑 Step 1: Enter reCAPTCHA v3 Site Key</b>\n\n"
+                "<blockquote>Please send your reCAPTCHA v3 Site Key.</blockquote>"
+            )
+        await safe_callback_answer(callback)
+        return
+
+    key_map = {
+        "panel_toggle_strict_ref": "strict_referer_enabled",
+        "panel_toggle_max_fails": "max_3_fails_enabled"
+    }
+
+    target_key = key_map.get(action)
+    if target_key:
+        current_val = cfg.get(target_key, True)
+        new_val = not current_val
+        await db.settings.update_one(
+            {"key": "security_config"},
+            {"$set": {target_key: new_val, "updated_at": datetime.utcnow()}},
+            upsert=True
+        )
+
+    keyboard = await get_panel_keyboard()
+    await send_bot_msg(
+        callback,
+        "<b>✅ Security Settings Updated!</b>\n\n<blockquote>Protection controls updated successfully. Backend security layer is active.</blockquote>",
+        reply_markup=keyboard
+    )
+    await safe_callback_answer(callback)
+
+# Cloudflare Turnstile Key Handlers
+@router.message(ConnectStates.waiting_for_cf_site_key)
+async def process_cf_site_key(message: types.Message, state: FSMContext):
+    site_key = message.text.strip()
+    await state.update_data(cf_site_key=site_key)
+    await state.set_state(ConnectStates.waiting_for_cf_secret_key)
+    await send_bot_msg(
+        message,
+        "<b>🔑 Step 2: Enter Cloudflare Turnstile Secret Key</b>\n\n"
+        "<blockquote>Please send your Cloudflare Turnstile Secret Key to complete setup.</blockquote>"
+    )
+
+@router.message(ConnectStates.waiting_for_cf_secret_key)
+async def process_cf_secret_key(message: types.Message, state: FSMContext):
+    secret_key = message.text.strip()
+    data = await state.get_data()
+    site_key = data.get("cf_site_key")
+
+    db = get_database()
+    await db.settings.update_one(
+        {"key": "security_config"},
+        {"$set": {
+            "cloudflare_enabled": True,
+            "cloudflare_site_key": site_key,
+            "cloudflare_secret_key": secret_key,
+            "updated_at": datetime.utcnow()
+        }},
+        upsert=True
+    )
+    await state.clear()
+    keyboard = await get_panel_keyboard()
+    await send_bot_msg(
+        message,
+        "<b>✅ Cloudflare Turnstile Protection Enabled!</b>\n\n"
+        "<blockquote>Keys saved successfully. Cloudflare Turnstile toggle is now TRUE (Enabled).</blockquote>",
+        reply_markup=keyboard
+    )
+
+# reCAPTCHA v2 Key Handlers
+@router.message(ConnectStates.waiting_for_recaptcha_v2_site_key)
+async def process_re_v2_site_key(message: types.Message, state: FSMContext):
+    site_key = message.text.strip()
+    await state.update_data(re_v2_site_key=site_key)
+    await state.set_state(ConnectStates.waiting_for_recaptcha_v2_secret_key)
+    await send_bot_msg(
+        message,
+        "<b>🔑 Step 2: Enter reCAPTCHA v2 Secret Key</b>\n\n"
+        "<blockquote>Please send your reCAPTCHA v2 Secret Key to complete setup.</blockquote>"
+    )
+
+@router.message(ConnectStates.waiting_for_recaptcha_v2_secret_key)
+async def process_re_v2_secret_key(message: types.Message, state: FSMContext):
+    secret_key = message.text.strip()
+    data = await state.get_data()
+    site_key = data.get("re_v2_site_key")
+
+    db = get_database()
+    await db.settings.update_one(
+        {"key": "security_config"},
+        {"$set": {
+            "recaptcha_v2_enabled": True,
+            "recaptcha_v2_site_key": site_key,
+            "recaptcha_v2_secret_key": secret_key,
+            "updated_at": datetime.utcnow()
+        }},
+        upsert=True
+    )
+    await state.clear()
+    keyboard = await get_panel_keyboard()
+    await send_bot_msg(
+        message,
+        "<b>✅ reCAPTCHA v2 Protection Enabled!</b>\n\n"
+        "<blockquote>Keys saved successfully. reCAPTCHA v2 toggle is now TRUE (Enabled).</blockquote>",
+        reply_markup=keyboard
+    )
+
+# reCAPTCHA v3 Key Handlers
+@router.message(ConnectStates.waiting_for_recaptcha_v3_site_key)
+async def process_re_v3_site_key(message: types.Message, state: FSMContext):
+    site_key = message.text.strip()
+    await state.update_data(re_v3_site_key=site_key)
+    await state.set_state(ConnectStates.waiting_for_recaptcha_v3_secret_key)
+    await send_bot_msg(
+        message,
+        "<b>🔑 Step 2: Enter reCAPTCHA v3 Secret Key</b>\n\n"
+        "<blockquote>Please send your reCAPTCHA v3 Secret Key to complete setup.</blockquote>"
+    )
+
+@router.message(ConnectStates.waiting_for_recaptcha_v3_secret_key)
+async def process_re_v3_secret_key(message: types.Message, state: FSMContext):
+    secret_key = message.text.strip()
+    data = await state.get_data()
+    site_key = data.get("re_v3_site_key")
+
+    db = get_database()
+    await db.settings.update_one(
+        {"key": "security_config"},
+        {"$set": {
+            "recaptcha_v3_enabled": True,
+            "recaptcha_v3_site_key": site_key,
+            "recaptcha_v3_secret_key": secret_key,
+            "updated_at": datetime.utcnow()
+        }},
+        upsert=True
+    )
+    await state.clear()
+    keyboard = await get_panel_keyboard()
+    await send_bot_msg(
+        message,
+        "<b>✅ reCAPTCHA v3 Protection Enabled!</b>\n\n"
+        "<blockquote>Keys saved successfully. reCAPTCHA v3 toggle is now TRUE (Enabled).</blockquote>",
+        reply_markup=keyboard
+    )
 
 @router.callback_query(F.data == "panel_view_images")
 async def cb_panel_view_images(callback: types.CallbackQuery):
