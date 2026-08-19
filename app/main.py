@@ -100,7 +100,7 @@ async def security_firewall_middleware(request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'unsafe-inline' 'self';"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self';"
         return response
 
     from urllib.parse import unquote
@@ -216,13 +216,13 @@ async def security_firewall_middleware(request: Request, call_next):
         response = RedirectResponse(url="/blocked", status_code=302)
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'unsafe-inline' 'self';"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self';"
         return response
 
     response = await call_next(request)
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'unsafe-inline' 'self';"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self';"
     return response
 
 
@@ -1218,10 +1218,12 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "javascript:",
         "564048",
         "greasyfork",
+        "greasyfork.org",
         "tampermonkey",
         "violentmonkey",
         "stealth final",
         "smart nicktrick",
+        "smart-nicktrick-redirect-stealth-final",
         "nicktrick redirect error",
         "top!==self",
         "searchparams",
@@ -1229,6 +1231,8 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "document.open",
         "ddxbypass",
         "bypassbot",
+        "antibypass",
+        "onrender",
         "strict-origin-when-cross-origin",
         "referrerpolicy",
         "flow=",
@@ -1259,7 +1263,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "javascript:",
         "564048",
         "smart nicktrick",
+        "smart-nicktrick-redirect-stealth-final",
         "greasyfork",
+        "greasyfork.org",
         "tampermonkey",
         "violentmonkey",
         "stealth final",
