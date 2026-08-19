@@ -834,7 +834,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
     # Block known bypass domains in referer
     if raw_referer:
-        blocked_domains = ["urllinkshort.in", "antibypass-31lh.onrender.com", "nicktrick"]
+        blocked_domains = ["antibypass-31lh.onrender.com", "nicktrick"]
         for domain in blocked_domains:
             if domain in raw_referer.lower():
                 return True, f"Blocked known bypass domain in referer: {domain}"
