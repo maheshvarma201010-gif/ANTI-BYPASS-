@@ -1456,58 +1456,9 @@ async def continue_endpoint(
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Retrieve real/original destination URL
-    destination_url = session["original_url"]
+    destination_url = session.get("original_url") or "https://t.me/alonekingstar"
 
-    # Determine if it's a browser requesting standard HTML page
-    user_agent = request.headers.get("user-agent", "").lower()
-    accept_header = request.headers.get("accept", "").lower()
-    is_browser = "text/html" in accept_header and "test-agent" not in user_agent and "pytest" not in user_agent
-
-    if is_browser:
-        import hashlib
-        import secrets
-        redirect_id = secrets.token_urlsafe(8)
-        salt = secrets.token_urlsafe(16)
-        tab_token = secrets.token_urlsafe(16)
-        gateway_nonce = secrets.token_urlsafe(16)
-        normalized_ua = request.headers.get("user-agent", "").strip()
-        client_ip = get_client_ip(request)
-
-        session_hash_input = f"{client_ip}:{normalized_ua}:{salt}"
-        session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()
-
-        # Store redirect mapping in redirects collection with 120s TTL
-        await db.redirects.insert_one({
-            "redirect_id": redirect_id,
-            "target_url": destination_url,
-            "created_at": time.time(),
-            "expires_at": time.time() + 120,
-            "consumed": False,
-            "status": "unused",
-            "client_ip": client_ip,
-            "session_hash": session_hash,
-            "salt": salt,
-            "user_agent": request.headers.get("user-agent", ""),
-            "session_id": cookie_session_id or session.get("session_id"),
-            "tab_token": tab_token,
-            "nonce": gateway_nonce,
-            "user_id": str(user_id) if user_id else None,
-            "short_id": short_id,
-            "mode": session.get("mode", "NORMAL"),
-            "manual_min_seconds": session.get("manual_min_seconds"),
-            "manual_max_seconds": session.get("manual_max_seconds"),
-            "session_start_time": session.get("created_at")
-        })
-
-        html_content = (
-            GATEWAY_TEMPLATE
-            .replace("{redirect_id}", redirect_id)
-            .replace("{tab_token}", tab_token)
-            .replace("{nonce}", gateway_nonce)
-        )
-        return HTMLResponse(content=html_content, status_code=200)
-
-    # Redirect to the final destination
+    # Redirect directly to the final destination without any HTML UI delay
     return RedirectResponse(url=destination_url, status_code=302)
 
 
