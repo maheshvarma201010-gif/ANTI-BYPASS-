@@ -1231,8 +1231,6 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "document.open",
         "ddxbypass",
         "bypassbot",
-        "antibypass",
-        "onrender",
         "strict-origin-when-cross-origin",
         "referrerpolicy",
         "flow=",
