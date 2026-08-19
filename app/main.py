@@ -100,7 +100,7 @@ async def security_firewall_middleware(request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'unsafe-inline' 'self';"
         return response
 
     from urllib.parse import unquote
@@ -216,13 +216,13 @@ async def security_firewall_middleware(request: Request, call_next):
         response = RedirectResponse(url="/blocked", status_code=302)
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'unsafe-inline' 'self';"
         return response
 
     response = await call_next(request)
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'unsafe-inline' 'self';"
     return response
 
 
@@ -1230,6 +1230,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "ddxbypass",
         "bypassbot",
         "strict-origin-when-cross-origin",
+        "referrerpolicy",
         "flow=",
         "/verify/",
         "eval(",
@@ -1266,6 +1267,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "bypassbot",
         "flow",
         "strict-origin-when-cross-origin",
+        "referrerpolicy",
         "eval",
         "decodeuricomponent",
         "<script",
@@ -1273,7 +1275,8 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "document.open",
         "top!==self",
         "nicktrick redirect error",
-        "#modal"
+        "#modal",
+        "#status"
     ]
 
     for k, v in request.query_params.items():
