@@ -574,9 +574,9 @@ GATEWAY_TEMPLATE = """
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
             color: #ffffff;
             background:
-                radial-gradient(circle at 50% -20%, rgba(59, 130, 246, 0.25), transparent 50%),
-                radial-gradient(circle at 80% 80%, rgba(245, 158, 11, 0.12), transparent 40%),
-                radial-gradient(circle at 10% 90%, rgba(30, 58, 138, 0.35), transparent 45%),
+                radial-gradient(circle at 50% -20%, rgba(234, 179, 8, 0.35), transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(236, 72, 153, 0.25), transparent 40%),
+                radial-gradient(circle at 10% 90%, rgba(139, 92, 246, 0.35), transparent 45%),
                 #030712;
             overflow-x: hidden;
             display: flex;
@@ -605,12 +605,12 @@ GATEWAY_TEMPLATE = """
         }
 
         .premium-card {
-            background: linear-gradient(135deg, rgba(10, 14, 26, 0.85) 0%, rgba(3, 5, 14, 0.98) 100%);
-            border: 1px solid rgba(59, 130, 246, 0.3);
+            background: linear-gradient(135deg, rgba(15, 12, 28, 0.9) 0%, rgba(5, 3, 12, 0.98) 100%);
+            border: 1px solid rgba(250, 204, 21, 0.5);
             box-shadow:
                 0 40px 100px -30px rgba(0, 0, 0, 0.95),
-                0 0 50px -10px rgba(59, 130, 246, 0.2),
-                inset 0 1px 1px rgba(255, 255, 255, 0.05);
+                0 0 60px -5px rgba(250, 204, 21, 0.35),
+                inset 0 1px 1px rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(35px);
             border-radius: 32px;
             padding: 56px 48px;
@@ -625,8 +625,8 @@ GATEWAY_TEMPLATE = """
             transform: translateY(-4px);
             box-shadow:
                 0 50px 110px -25px rgba(0, 0, 0, 0.95),
-                0 0 65px -5px rgba(59, 130, 246, 0.25),
-                inset 0 1px 1px rgba(255, 255, 255, 0.08);
+                0 0 75px 5px rgba(250, 204, 21, 0.45),
+                inset 0 1px 1px rgba(255, 255, 255, 0.15);
         }
 
         .premium-card.error-state {
@@ -640,12 +640,18 @@ GATEWAY_TEMPLATE = """
         .card-glow {
             position: absolute;
             top: 0;
-            left: 10%;
-            width: 80%;
-            height: 3px;
-            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.8), transparent);
-            box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, #ef4444, #f59e0b, #eab308, #10b981, #06b6d4, #3b82f6, #8b5cf6, #ec4899);
+            background-size: 200% auto;
+            animation: rainbow-slide 3s linear infinite;
+            box-shadow: 0 0 25px rgba(250, 204, 21, 0.8);
             transition: all 0.5s ease;
+        }
+
+        @keyframes rainbow-slide {
+            to { background-position: 200% center; }
         }
 
         .premium-card.error-state .card-glow {
@@ -658,8 +664,8 @@ GATEWAY_TEMPLATE = """
             font-weight: 800;
             margin: 0 0 16px 0;
             letter-spacing: -0.01em;
-            background: linear-gradient(90deg, #3b82f6, #93c5fd, #3b82f6);
-            background-size: 200% auto;
+            background: linear-gradient(90deg, #eab308, #ec4899, #8b5cf6, #06b6d4, #10b981, #f59e0b, #eab308);
+            background-size: 300% auto;
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -689,8 +695,10 @@ GATEWAY_TEMPLATE = """
             position: absolute;
             inset: 0;
             border-radius: 50%;
-            border: 2px solid rgba(59, 130, 246, 0.1);
-            border-top-color: #3b82f6;
+            border: 3px solid rgba(250, 204, 21, 0.15);
+            border-top-color: #facc15;
+            border-right-color: #ec4899;
+            box-shadow: 0 0 20px rgba(250, 204, 21, 0.5);
             animation: spin 1s linear infinite;
         }
 
@@ -702,18 +710,19 @@ GATEWAY_TEMPLATE = """
             position: absolute;
             inset: 12px;
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.02) 100%);
-            border: 1px solid rgba(59, 130, 246, 0.2);
+            background: radial-gradient(circle, rgba(250, 204, 21, 0.2) 0%, rgba(250, 204, 21, 0.02) 100%);
+            border: 1px solid rgba(250, 204, 21, 0.4);
             display: flex;
             align-items: center;
             justify-content: center;
+            box-shadow: 0 0 20px rgba(250, 204, 21, 0.25);
         }
 
         .shield-svg {
             width: 32px;
             height: 32px;
-            fill: #3b82f6;
-            filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.4));
+            fill: #facc15;
+            filter: drop-shadow(0 0 12px rgba(250, 204, 21, 0.8));
         }
 
         .premium-card.error-state .shield-svg {
@@ -725,15 +734,16 @@ GATEWAY_TEMPLATE = """
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            background: rgba(59, 130, 246, 0.08);
-            border: 1px solid rgba(59, 130, 246, 0.15);
+            background: rgba(250, 204, 21, 0.12);
+            border: 1px solid rgba(250, 204, 21, 0.35);
             padding: 6px 14px;
             border-radius: 100px;
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 700;
             letter-spacing: 0.1em;
             text-transform: uppercase;
-            color: #60a5fa;
+            color: #fef08a;
+            box-shadow: 0 0 15px rgba(250, 204, 21, 0.2);
             transition: all 0.3s ease;
             margin-bottom: 32px;
         }
@@ -742,8 +752,8 @@ GATEWAY_TEMPLATE = """
             width: 6px;
             height: 6px;
             border-radius: 50%;
-            background: #3b82f6;
-            box-shadow: 0 0 8px #3b82f6;
+            background: #facc15;
+            box-shadow: 0 0 10px #facc15;
             animation: pulse 2s infinite;
         }
 
@@ -772,11 +782,12 @@ GATEWAY_TEMPLATE = """
         .progress-fill {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, #3b82f6, #60a5fa);
-            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+            background: linear-gradient(90deg, #facc15, #ec4899, #8b5cf6, #06b6d4, #10b981);
+            background-size: 200% auto;
+            box-shadow: 0 0 14px rgba(250, 204, 21, 0.8);
             border-radius: 100px;
             transition: width 0.3s ease;
-            animation: pulse-glow 2s infinite alternate;
+            animation: pulse-glow 2s infinite alternate, rainbow-slide 3s linear infinite;
         }
 
         @keyframes pulse-glow {
