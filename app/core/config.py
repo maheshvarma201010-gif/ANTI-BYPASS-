@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     DATABASE_NAME: str = "antibypass"
 
     TELEGRAM_BOT_TOKEN: str = ""
+    FILESTORE_APIKEY: str = ""
     BASE_URL: str = "https://antibypass.koyeb.app"
 
     # Admin IDs and Banner Images configuration from env or defaults

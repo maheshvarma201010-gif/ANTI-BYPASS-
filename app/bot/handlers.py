@@ -461,12 +461,140 @@ async def cmd_connect(message: types.Message):
         }
         await db.users.insert_one(new_user)
 
+    text = message.text.strip()
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+    # Parse serial-numbered FileStore bot entries: "1. BOT: @BOT1\n BASE URL: <URL>"
+    if len(lines) > 1 or "BOT:" in text:
+        added_bots = []
+        import re
+        bot_blocks = re.split(r'\n(?=\d+\.\s*BOT:|\bBOT:)', text, flags=re.IGNORECASE)
+        for block in bot_blocks:
+            bot_match = re.search(r'BOT:\s*@?([A-Za-z0-9_]+)', block, re.IGNORECASE)
+            url_match = re.search(r'BASE\s*URL:\s*(https?://[^\s]+)', block, re.IGNORECASE)
+            if bot_match and url_match:
+                b_name = bot_match.group(1).strip()
+                b_url = url_match.group(1).strip().rstrip('/')
+                b_key = generate_api_key()
+                bot_doc = {
+                    "user_id": str(user.get("_id") if user else telegram_id),
+                    "telegram_id": telegram_id,
+                    "bot_username": b_name,
+                    "base_url": b_url,
+                    "api_key": b_key,
+                    "created_at": datetime.utcnow()
+                }
+                await db.connected_bots.update_one(
+                    {"telegram_id": telegram_id, "bot_username": b_name},
+                    {"$set": bot_doc},
+                    upsert=True
+                )
+                added_bots.append((b_name, b_url, b_key))
+
+        if added_bots:
+            msg = "<b>✅ FileStore Bots Connected Successfully!</b>\n\n"
+            for i, (b_name, b_url, b_key) in enumerate(added_bots, 1):
+                msg += (
+                    f"<b>{i}. @{b_name}</b>\n"
+                    f"<blockquote>• <b>Base URL:</b> {b_url}\n"
+                    f"• <b>Generated API Key:</b> <code>{b_key}</code></blockquote>\n\n"
+                )
+            await send_bot_msg(message, msg, reply_markup=get_start_keyboard())
+            return
+
     keyboard = await get_connect_keyboard(telegram_id, db)
     await send_bot_msg(
         message,
         "<b>🔗 Connect & Manage Shorteners</b>\n\n<blockquote>Choose a shortener or add a new one:</blockquote>",
         reply_markup=keyboard
     )
+
+@router.message(Command("verify"))
+async def cmd_verify(message: types.Message):
+    db = get_database()
+    telegram_id = str(message.from_user.id)
+
+    bots_cursor = db.connected_bots.find({})
+    connected_bots = await bots_cursor.to_list(length=50)
+
+    if not connected_bots:
+        # Fall back to user connected shorteners or defaults
+        user = await db.users.find_one({"telegram_id": telegram_id})
+        shorteners = user.get("shorteners", []) if user else []
+        if not shorteners:
+            await send_bot_msg(
+                message,
+                "<b>❌ No Connected Verification Bots</b>\n\n<blockquote>No connected FileStore bots found. Use /connect to register a bot first.</blockquote>",
+                reply_markup=get_start_keyboard()
+            )
+            return
+
+        buttons = []
+        for i, s in enumerate(shorteners, 1):
+            name = s.get("name")
+            buttons.append([InlineKeyboardButton(text=f"{i}. {name}", callback_data=f"verify_bot:{name}")])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await send_bot_msg(
+            message,
+            "<b>🔐 Select Verification Bot:</b>\n\n<blockquote>Choose a connected bot to generate a protected verification shortlink:</blockquote>",
+            reply_markup=kb
+        )
+        return
+
+    buttons = []
+    for i, b in enumerate(connected_bots, 1):
+        b_name = b.get("bot_username", "Bot")
+        buttons.append([InlineKeyboardButton(text=f"{i}. {b_name}", callback_data=f"verify_bot:{b_name}")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await send_bot_msg(
+        message,
+        "<b>🔐 Select Connected Verification Bot:</b>\n\n<blockquote>Click on a bot below to generate a protected verification shortlink:</blockquote>",
+        reply_markup=kb
+    )
+
+@router.callback_query(F.data.startswith("verify_bot:"))
+async def cb_verify_bot(callback: types.CallbackQuery):
+    bot_name = callback.data.split(":", 1)[1]
+    db = get_database()
+    telegram_id = str(callback.from_user.id)
+
+    import secrets
+    import time
+    short_id = secrets.token_urlsafe(8)
+
+    # Destination URL redirects user back to the Telegram Bot
+    target_url = f"https://t.me/{bot_name.lstrip('@')}"
+    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+
+    protected_link = {
+        "user_id": telegram_id,
+        "telegram_id": telegram_id,
+        "bot_username": bot_name,
+        "short_id": short_id,
+        "original_url": target_url,
+        "shortener_base_url": base_app_url,
+        "created_at": datetime.utcnow()
+    }
+    await db.protected_links.insert_one(protected_link)
+
+    ver_link = f"{base_app_url}/{short_id}"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Open Verification Shortlink", url=ver_link)],
+        [InlineKeyboardButton(text="⬅️ Back to Main Menu", callback_data="back_to_main")]
+    ])
+
+    await send_bot_msg(
+        callback,
+        f"<b>🔐 Verification Shortlink Generated for @{bot_name.lstrip('@')}</b>\n\n"
+        f"<blockquote>• <b>Protected Link:</b> <code>{ver_link}</code>\n"
+        f"• <b>Target Bot:</b> <code>https://t.me/{bot_name.lstrip('@')}</code></blockquote>\n\n"
+        "<i>Open the link above to complete backend verification and return to your bot!</i>",
+        reply_markup=keyboard
+    )
+    await safe_callback_answer(callback)
 
 @router.message(ConnectStates.waiting_for_url)
 async def process_url(message: types.Message, state: FSMContext):

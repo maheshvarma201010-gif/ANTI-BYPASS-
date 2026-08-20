@@ -1095,15 +1095,25 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
     if "pytest" in ua_lower or "test-agent" in ua_lower:
         return False, ""
 
-    bot_keywords = [
-        "bot", "crawler", "spider", "headless", "phantom", "selenium",
-        "puppeteer", "playwright", "python", "curl", "wget", "go-http-client",
-        "axios", "node-fetch", "urllib", "aiohttp", "httpx", "postman",
-        "insomnia", "bypass", "ddxbypass", "bypassbot", "checker", "scraper",
-        "tampermonkey", "greasyfork", "violentmonkey", "nicktrick",
-        "phantomjs", "headlesschrome", "rhino", "htmlunit", "webdriver", "electron"
+    automation_keywords = [
+        "headless", "phantom", "selenium", "puppeteer", "playwright",
+        "python", "curl", "wget", "go-http-client", "axios", "node-fetch",
+        "urllib", "aiohttp", "httpx", "postman", "insomnia", "ddxbypass",
+        "bypassbot", "checker", "scraper", "tampermonkey", "greasyfork",
+        "violentmonkey", "nicktrick", "phantomjs", "headlesschrome",
+        "rhino", "htmlunit", "webdriver", "electron"
     ]
 
+    # Always block explicit automation tools even if they include 'telegram' in User-Agent
+    for kw in automation_keywords:
+        if kw in ua_lower:
+            return True, f"Automated tool/scraper User-Agent keyword '{kw}' detected"
+
+    # Allow official Telegram client, MiniApp, and WebApp user agents
+    if any(tg in ua_lower for tg in ["telegram", "miniapp", "webapp", "tdesktop"]):
+        return False, ""
+
+    bot_keywords = ["bot", "crawler", "spider"]
     for kw in bot_keywords:
         if kw in ua_lower:
             return True, f"Automated bot/crawler User-Agent keyword '{kw}' detected"
@@ -1556,7 +1566,7 @@ async def redirect_endpoint(
     # Same-session validation
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
-    if expected_session_id and expected_session_id != cookie_session_id:
+    if expected_session_id and cookie_session_id and expected_session_id != cookie_session_id:
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Same-tab validation
@@ -1572,6 +1582,27 @@ async def redirect_endpoint(
     )
     if result.modified_count == 0:
         return RedirectResponse(url="/blocked", status_code=302)
+
+    # Record user verification in db.user_verifications
+    user_id_str = redirect_doc.get("user_id")
+    telegram_id = redirect_doc.get("telegram_id")
+    if user_id_str or telegram_id:
+        try:
+            tg_id = str(telegram_id) if telegram_id else str(user_id_str)
+            await db.user_verifications.update_one(
+                {"telegram_id": tg_id},
+                {"$set": {
+                    "telegram_id": tg_id,
+                    "user_id": user_id_str,
+                    "bot_username": redirect_doc.get("bot_username"),
+                    "short_id": redirect_doc.get("short_id"),
+                    "verified": True,
+                    "verified_at": time.time()
+                }},
+                upsert=True
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record user verification: {e}")
 
     # Secure server-side HTTP 302 redirect
     return RedirectResponse(url=redirect_doc["target_url"], status_code=302)
@@ -1707,6 +1738,27 @@ async def redirect_post_endpoint(
     if result.modified_count == 0:
         raise HTTPException(status_code=410, detail="Redirect already consumed")
 
+    # Record user verification in db.user_verifications
+    user_id_str = redirect_doc.get("user_id")
+    telegram_id = redirect_doc.get("telegram_id")
+    if user_id_str or telegram_id:
+        try:
+            tg_id = str(telegram_id) if telegram_id else str(user_id_str)
+            await db.user_verifications.update_one(
+                {"telegram_id": tg_id},
+                {"$set": {
+                    "telegram_id": tg_id,
+                    "user_id": user_id_str,
+                    "bot_username": redirect_doc.get("bot_username"),
+                    "short_id": redirect_doc.get("short_id"),
+                    "verified": True,
+                    "verified_at": time.time()
+                }},
+                upsert=True
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record user verification in post endpoint: {e}")
+
     return {"status": "success", "destination": redirect_doc["target_url"]}
 
 
@@ -1752,15 +1804,29 @@ def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
 
 
 def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
-    if not shortener_base_url:
-        return True
-
     if not referer:
         return False
 
     from urllib.parse import unquote, urlparse
 
     ref_clean = unquote(referer).strip()
+    ref_lower = ref_clean.lower()
+
+    # Explicitly allow Telegram domains
+    telegram_domains = ["t.me", "telegram.org", "web.telegram.org", "org.telegram.messenger", "web.t.me"]
+    for tg_dom in telegram_domains:
+        if tg_dom in ref_lower:
+            return True
+
+    # Allow base URL matches
+    if settings.BASE_URL:
+        base_netloc = urlparse(settings.BASE_URL).netloc.lower().split(":")[0]
+        if base_netloc and base_netloc in ref_lower:
+            return True
+
+    if not shortener_base_url:
+        return True
+
     shortener_clean = unquote(shortener_base_url).strip()
 
     try:
@@ -1901,24 +1967,29 @@ async def original_shortlink(
             )
             return RedirectResponse(url="/blocked", status_code=302)
 
+    # Check if request is coming from Telegram Mini App, WebApp, or Telegram Client
+    ua_lower = user_agent.lower()
+    is_telegram_client = any(tg in ua_lower for tg in ["telegram", "miniapp", "webapp", "tdesktop"])
+
     # ============== REFERER/ORIGIN VALIDATION ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
 
-    # Strict Empty Referer Enforcement: Block all requests without a valid Referer header
+    # Strict Empty Referer Enforcement: Block requests without a valid Referer header unless Telegram client/MiniApp
     if not referer or not referer.strip():
-        await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
-        await db.users.update_one(
-            {"_id": user_id},
-            {"$inc": {"blocked_count": 1, "referer_failures": 1}}
-        )
-        await send_bypass_notification(
-            user_id,
-            short_id,
-            "Bypass Blocked: Empty or missing Referer header on shortlink",
-            request,
-            db
-        )
-        return RedirectResponse(url="/blocked", status_code=302)
+        if not is_telegram_client:
+            await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
+            await db.users.update_one(
+                {"_id": user_id},
+                {"$inc": {"blocked_count": 1, "referer_failures": 1}}
+            )
+            await send_bypass_notification(
+                user_id,
+                short_id,
+                "Bypass Blocked: Empty or missing Referer header on shortlink",
+                request,
+                db
+            )
+            return RedirectResponse(url="/blocked", status_code=302)
 
     if shortener_base_url:
         if not is_valid_shortener_referer(referer, shortener_base_url):
