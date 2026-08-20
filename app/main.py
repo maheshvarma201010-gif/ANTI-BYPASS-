@@ -15,6 +15,7 @@ from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
+from app.bot.bot import bot
 
 def get_client_ip(request: Request) -> str:
     cf_ip = request.headers.get("cf-connecting-ip")
@@ -1300,11 +1301,12 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
             if kw in full_k or kw in full_v:
                 return True, f"Banned userscript pattern '{kw}' detected in query parameters"
 
-    # Bot User-Agent detection
+    # Bot User-Agent detection (permit Telegram Mini App requests)
     user_agent = request.headers.get("user-agent", "")
-    is_bot, bot_reason = is_bot_user_agent(user_agent)
-    if is_bot:
-        return True, bot_reason
+    if "telegram" not in user_agent.lower() and "webapp" not in user_agent.lower():
+        is_bot, bot_reason = is_bot_user_agent(user_agent)
+        if is_bot:
+            return True, bot_reason
 
     return False, ""
 
@@ -1357,8 +1359,9 @@ async def continue_endpoint(
 
     referer = request.headers.get("referer", "")
 
-    # Empty Referer check on /continue: Bookmarklets strip referer
-    if not referer or not referer.strip():
+    # Empty Referer check on /continue: Bookmarklets strip referer (allow Telegram Mini App requests)
+    is_tg_app = "tg_webapp" in request.query_params or "tgWebAppData" in request.query_params or session.get("is_tg_app", False)
+    if (not referer or not referer.strip()) and not is_tg_app:
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1, "referer_failures": 1}})
             await send_bypass_notification(user_id, short_id, "Bypass Blocked: Empty or missing Referer on /continue route", request, db)
@@ -1901,35 +1904,39 @@ async def original_shortlink(
     # ============== REFERER/ORIGIN VALIDATION ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
 
-    # Strict Empty Referer Enforcement: Block all requests without a valid Referer header
-    if not referer or not referer.strip():
-        await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
-        await db.users.update_one(
-            {"_id": user_id},
-            {"$inc": {"blocked_count": 1, "referer_failures": 1}}
-        )
-        await send_bypass_notification(
-            user_id,
-            short_id,
-            "Bypass Blocked: Empty or missing Referer header on shortlink",
-            request,
-            db
-        )
-        return RedirectResponse(url="/blocked", status_code=302)
+    # Check if request originates from Telegram Mini App or contains tg_webapp parameters
+    is_tg_app = "tg_webapp" in request.query_params or "tgWebAppData" in request.query_params or "telegram" in user_agent.lower()
 
-    if shortener_base_url:
-        if not is_valid_shortener_referer(referer, shortener_base_url):
-            ref_str = referer if referer else "Missing"
-            shortener_domain = urlparse(shortener_base_url).netloc or shortener_base_url
-            reason = f"Bypass detected: Missing or invalid Referer (expected '{shortener_domain}', got '{ref_str}')"
-
+    # Strict Empty Referer Enforcement: Block all requests without a valid Referer header (unless inside Telegram Mini App)
+    if not is_tg_app:
+        if not referer or not referer.strip():
             await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
             await db.users.update_one(
                 {"_id": user_id},
                 {"$inc": {"blocked_count": 1, "referer_failures": 1}}
             )
-            await send_bypass_notification(user_id, short_id, reason, request, db)
+            await send_bypass_notification(
+                user_id,
+                short_id,
+                "Bypass Blocked: Empty or missing Referer header on shortlink",
+                request,
+                db
+            )
             return RedirectResponse(url="/blocked", status_code=302)
+
+        if shortener_base_url:
+            if not is_valid_shortener_referer(referer, shortener_base_url):
+                ref_str = referer if referer else "Missing"
+                shortener_domain = urlparse(shortener_base_url).netloc or shortener_base_url
+                reason = f"Bypass detected: Missing or invalid Referer (expected '{shortener_domain}', got '{ref_str}')"
+
+                await db.ip_failures.insert_one({"ip": client_ip, "created_at": time.time(), "short_id": short_id})
+                await db.users.update_one(
+                    {"_id": user_id},
+                    {"$inc": {"blocked_count": 1, "referer_failures": 1}}
+                )
+                await send_bypass_notification(user_id, short_id, reason, request, db)
+                return RedirectResponse(url="/blocked", status_code=302)
 
     # 2. Create a secure, short-lived server-side verification session with single-use token
     session_id = secrets.token_urlsafe(32)
