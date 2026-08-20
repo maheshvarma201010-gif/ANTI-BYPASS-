@@ -117,7 +117,9 @@ class ConnectStates(StatesGroup):
     waiting_for_recaptcha_v3_secret_key = State()
 
 def get_start_keyboard():
+    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Open Protection Mini App", web_app=types.WebAppInfo(url=base_url))],
         [InlineKeyboardButton(text="⚡ Connect Shortener", callback_data="connect_shortener")],
         [InlineKeyboardButton(text="📋 My API Keys", callback_data="view_api_keys")],
         [InlineKeyboardButton(text="📊 Realtime Stats", callback_data="view_stats")],
@@ -140,6 +142,30 @@ async def get_connect_keyboard(telegram_id: str, db):
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
+    args = message.text.split(maxsplit=1)
+    base_url = (settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com").rstrip('/')
+
+    if len(args) > 1:
+        payload = args[1].strip()
+        if payload.startswith("http://") or payload.startswith("https://"):
+            target_url = payload
+        else:
+            target_url = f"{base_url}/{payload}"
+
+        mini_app_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Open in Mini App", web_app=types.WebAppInfo(url=target_url))],
+            [InlineKeyboardButton(text="🔗 Direct Link", url=target_url)],
+            [InlineKeyboardButton(text="⬅️ Main Menu", callback_data="back_to_main")]
+        ])
+
+        link_text = (
+            "<b>📱 Verification & Protection Mini App</b>\n\n"
+            f"<blockquote><b>Target Link:</b> <code>{target_url}</code>\n\n"
+            "Click the button below to open backend verification and redirection securely inside Telegram Mini App.</blockquote>"
+        )
+        await send_bot_msg(message, link_text, reply_markup=mini_app_keyboard)
+        return
+
     welcome_text = (
         "<b>💎 Anti-Bypass Protection Service</b>\n\n"
         "<blockquote>Welcome to the official <b>Anti-Bypass Protection Bot</b>.\n"
@@ -149,7 +175,7 @@ async def cmd_start(message: types.Message):
         "• <code>Dual Modes</code> - Choose between <b>NORMAL</b> and <b>MANUAL</b> timer modes.\n"
         "• <code>Instant Alerts</code> - Get real-time notifications on bypass attempts.\n"
         "• <code>Browser Enforcement</code> - Strict Referer and DOM sandboxing.\n\n"
-        "<i>Click below to connect your shorteners and protect your income!</i>"
+        "<i>Click below to open Mini App or connect your shorteners!</i>"
     )
     await send_bot_msg(message, welcome_text, reply_markup=get_start_keyboard())
 
@@ -171,7 +197,7 @@ async def cmd_help(message: types.Message):
         "2. <b>MANUAL Mode:</b> Custom timer-based window (e.g. 20s to 40s) where links expire if completed outside the window.\n\n"
         "<b>🔌 API Integration:</b>\n"
         "Replace your default shortener API key with your generated <b>ABP API Key</b>:\n"
-        "<code>https://antibypass.koyeb.app/api?api=YOUR_ABP_KEY&url=TARGET_URL</code>"
+        "<code>https://antibypass-31lh.onrender.com/api?api=YOUR_ABP_KEY&url=TARGET_URL</code>"
     )
     await send_bot_msg(message, help_text, reply_markup=get_start_keyboard())
 
@@ -290,7 +316,7 @@ async def cb_mode_normal(callback: types.CallbackQuery):
         return
 
     original_api_key = decrypt_url(shortener.get("api_key"))
-    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
     abp_key = shortener.get("abp_key")
 
     await send_bot_msg(
@@ -388,7 +414,7 @@ async def process_manual_end_time(message: types.Message, state: FSMContext):
         }}
     )
 
-    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
 
     await state.clear()
     await send_bot_msg(
@@ -556,7 +582,7 @@ async def process_api_key(message: types.Message, state: FSMContext):
         await db.users.insert_one(new_user)
 
     await state.clear()
-    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
 
     await send_bot_msg(
         message,
@@ -587,7 +613,7 @@ async def cb_view_api_keys(target: types.Message | types.CallbackQuery):
         await send_bot_msg(target, "<b>❌ No connected shorteners found. Use /connect to add one.</b>", reply_markup=get_start_keyboard())
         return
 
-    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
 
     response = "<b>📋 Your Configured Shorteners & ABP Keys:</b>\n\n"
     for i, s in enumerate(shorteners, 1):
@@ -643,6 +669,36 @@ async def cmd_delete(message: types.Message):
     telegram_id = str(message.from_user.id)
     await db.users.delete_one({"telegram_id": telegram_id})
     await send_bot_msg(message, "<b>✅ Account deleted successfully.</b>", reply_markup=get_start_keyboard())
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def handle_url_message(message: types.Message, state: FSMContext):
+    # Check if FSM is currently waiting for input
+    current_state = await state.get_state()
+    if current_state is not None:
+        return
+
+    text = message.text.strip()
+    base_url = (settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com").rstrip('/')
+
+    if text.startswith("http://") or text.startswith("https://"):
+        target_url = text
+    elif len(text) <= 64 and not " " in text:
+        target_url = f"{base_url}/{text}"
+    else:
+        return
+
+    mini_app_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Open in Mini App", web_app=types.WebAppInfo(url=target_url))],
+        [InlineKeyboardButton(text="🔗 Direct Link", url=target_url)],
+        [InlineKeyboardButton(text="⬅️ Main Menu", callback_data="back_to_main")]
+    ])
+
+    link_text = (
+        "<b>📱 Verification & Protection Mini App</b>\n\n"
+        f"<blockquote><b>Target Link:</b> <code>{target_url}</code>\n\n"
+        "Click the button below to open backend verification and redirection securely inside Telegram Mini App.</blockquote>"
+    )
+    await send_bot_msg(message, link_text, reply_markup=mini_app_keyboard)
 
 # ================= ADMIN PANEL HANDLERS =================
 def is_admin(user_id: int | str) -> bool:
