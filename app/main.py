@@ -98,9 +98,8 @@ async def security_firewall_middleware(request: Request, call_next):
     path = raw_path.lower()
     if path in ["/blocked", "/health"]:
         response = await call_next(request)
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org;"
         return response
 
     from urllib.parse import unquote
@@ -214,15 +213,13 @@ async def security_firewall_middleware(request: Request, call_next):
             logger.error(f"Error in security firewall middleware handling: {exc}")
 
         response = RedirectResponse(url="/blocked", status_code=302)
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org;"
         return response
 
     response = await call_next(request)
-    response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self';"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org;"
     return response
 
 
