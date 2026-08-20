@@ -1065,8 +1065,16 @@ GATEWAY_TEMPLATE = """
             try {
                 if (!tamperingDetected) {
                     const fp = getCanvasFingerprint();
-                    const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
-                    nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE) + "&fp=" + encodeURIComponent(fp));
+                    let storedTabToken = TAB_TOKEN;
+                    try {
+                        storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
+                    } catch(e) {}
+                    const targetUrl = "/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE) + "&fp=" + encodeURIComponent(fp);
+                    try {
+                        nativeReplace(targetUrl);
+                    } catch(e) {
+                        window.location.href = targetUrl;
+                    }
                 }
             } catch (e) {
                 showError("Verification Failure", "Redirection failed. Please reload the page.");
@@ -1477,6 +1485,8 @@ async def continue_endpoint(
 
     # Retrieve real/original destination URL
     destination_url = session["original_url"]
+    if destination_url and not (destination_url.startswith("http://") or destination_url.startswith("https://")):
+        destination_url = f"https://{destination_url}"
 
     # Determine if it's a browser requesting standard HTML page
     user_agent = request.headers.get("user-agent", "").lower()
@@ -1591,7 +1601,7 @@ async def redirect_endpoint(
     # Same-session validation
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
-    if expected_session_id and expected_session_id != cookie_session_id:
+    if expected_session_id and cookie_session_id and expected_session_id != cookie_session_id:
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Atomically mark the redirect ID as consumed and verified
@@ -1750,7 +1760,7 @@ async def redirect_post_endpoint(
     # Same-session validation
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
-    if expected_session_id and expected_session_id != cookie_session_id:
+    if expected_session_id and cookie_session_id and expected_session_id != cookie_session_id:
         raise HTTPException(status_code=403, detail="Session verification failed")
 
     # Atomically mark as consumed and verified
@@ -1816,6 +1826,15 @@ def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
 
     ref_clean = unquote(referer).strip()
     shortener_clean = unquote(shortener_base_url).strip()
+
+    # Allow self-referential / app BASE_URL referers for nested/daisy-chained links
+    if settings.BASE_URL:
+        app_base = settings.BASE_URL.strip()
+        app_parsed = urlparse(app_base if "://" in app_base else f"http://{app_base}")
+        ref_parsed_check = urlparse(ref_clean if "://" in ref_clean else f"http://{ref_clean}")
+        if app_parsed.netloc and ref_parsed_check.netloc:
+            if app_parsed.netloc.lower().split(":")[0] == ref_parsed_check.netloc.lower().split(":")[0]:
+                return True
 
     try:
         ref_parsed = urlparse(ref_clean if "://" in ref_clean else f"http://{ref_clean}")
