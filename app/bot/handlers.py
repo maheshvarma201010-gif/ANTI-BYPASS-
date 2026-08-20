@@ -117,7 +117,7 @@ class ConnectStates(StatesGroup):
     waiting_for_recaptcha_v3_secret_key = State()
 
 def get_start_keyboard():
-    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Open Protection Mini App", web_app=types.WebAppInfo(url=base_url))],
         [InlineKeyboardButton(text="⚡ Connect Shortener", callback_data="connect_shortener")],
@@ -143,7 +143,7 @@ async def get_connect_keyboard(telegram_id: str, db):
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
     args = message.text.split(maxsplit=1)
-    base_url = (settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app").rstrip('/')
+    base_url = (settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com").rstrip('/')
 
     if len(args) > 1:
         payload = args[1].strip()
@@ -197,7 +197,7 @@ async def cmd_help(message: types.Message):
         "2. <b>MANUAL Mode:</b> Custom timer-based window (e.g. 20s to 40s) where links expire if completed outside the window.\n\n"
         "<b>🔌 API Integration:</b>\n"
         "Replace your default shortener API key with your generated <b>ABP API Key</b>:\n"
-        "<code>https://antibypass.koyeb.app/api?api=YOUR_ABP_KEY&url=TARGET_URL</code>"
+        "<code>https://antibypass-31lh.onrender.com/api?api=YOUR_ABP_KEY&url=TARGET_URL</code>"
     )
     await send_bot_msg(message, help_text, reply_markup=get_start_keyboard())
 
@@ -316,7 +316,7 @@ async def cb_mode_normal(callback: types.CallbackQuery):
         return
 
     original_api_key = decrypt_url(shortener.get("api_key"))
-    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
     abp_key = shortener.get("abp_key")
 
     await send_bot_msg(
@@ -414,7 +414,7 @@ async def process_manual_end_time(message: types.Message, state: FSMContext):
         }}
     )
 
-    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
 
     await state.clear()
     await send_bot_msg(
@@ -582,7 +582,7 @@ async def process_api_key(message: types.Message, state: FSMContext):
         await db.users.insert_one(new_user)
 
     await state.clear()
-    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
 
     await send_bot_msg(
         message,
@@ -613,7 +613,7 @@ async def cb_view_api_keys(target: types.Message | types.CallbackQuery):
         await send_bot_msg(target, "<b>❌ No connected shorteners found. Use /connect to add one.</b>", reply_markup=get_start_keyboard())
         return
 
-    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
+    base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com"
 
     response = "<b>📋 Your Configured Shorteners & ABP Keys:</b>\n\n"
     for i, s in enumerate(shorteners, 1):
@@ -678,7 +678,7 @@ async def handle_url_message(message: types.Message, state: FSMContext):
         return
 
     text = message.text.strip()
-    base_url = (settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app").rstrip('/')
+    base_url = (settings.BASE_URL if settings.BASE_URL else "https://antibypass-31lh.onrender.com").rstrip('/')
 
     if text.startswith("http://") or text.startswith("https://"):
         target_url = text

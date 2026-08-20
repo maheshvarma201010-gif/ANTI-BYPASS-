@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     DATABASE_NAME: str = "antibypass"
 
     TELEGRAM_BOT_TOKEN: str = ""
-    BASE_URL: str = "https://antibypass.koyeb.app"
+    BASE_URL: str = "https://antibypass-31lh.onrender.com"
 
     # Admin IDs and Banner Images configuration from env or defaults
     ADMIN_IDS: str = ""
