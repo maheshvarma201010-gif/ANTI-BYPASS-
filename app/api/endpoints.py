@@ -148,6 +148,59 @@ async def create_protected_link(
             status_code=500
         )
 
+@router.get("/api/verify-status")
+@router.get("/api/check-verification")
+@router.get("/api/verifybot/status")
+@router.post("/api/verifybot/verify")
+async def verify_status_endpoint(
+    request: Request,
+    api_key: Optional[str] = Query(None),
+    telegram_id: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
+    db = Depends(get_database)
+):
+    # Extract API key from query params or Authorization header
+    key = api_key
+    if not key:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            key = auth_header.split(" ", 1)[1].strip()
+
+    # Verify key against FILESTORE_APIKEY or user api_key
+    is_valid_key = False
+    if settings.FILESTORE_APIKEY and key == settings.FILESTORE_APIKEY:
+        is_valid_key = True
+    elif key:
+        found = await db.users.find_one({"$or": [{"api_key": key}, {"shorteners.abp_key": key}, {"shorteners.manual_abp_key": key}]})
+        if found:
+            is_valid_key = True
+
+    if key and not is_valid_key:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+
+    query_id = str(telegram_id) if telegram_id else (str(user_id) if user_id else None)
+    if not query_id:
+        return JSONResponse(content={"status": "error", "message": "Missing telegram_id or user_id parameter"})
+
+    verification = await db.user_verifications.find_one({
+        "$or": [{"telegram_id": query_id}, {"user_id": query_id}]
+    })
+
+    if verification and verification.get("verified", False):
+        return {
+            "status": "success",
+            "verified": True,
+            "telegram_id": verification.get("telegram_id"),
+            "verified_at": verification.get("verified_at"),
+            "bot_username": verification.get("bot_username")
+        }
+
+    return {
+        "status": "success",
+        "verified": False,
+        "message": "User not verified"
+    }
+
 @router.get("/health")
 async def health_check():
     return {"status": "ok"}
