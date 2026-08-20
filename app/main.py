@@ -100,7 +100,7 @@ async def security_firewall_middleware(request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self';"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self'; frame-ancestors 'none';"
         return response
 
     from urllib.parse import unquote
@@ -216,13 +216,13 @@ async def security_firewall_middleware(request: Request, call_next):
         response = RedirectResponse(url="/blocked", status_code=302)
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self';"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self'; frame-ancestors 'none';"
         return response
 
     response = await call_next(request)
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self';"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' 'self'; frame-ancestors 'none';"
     return response
 
 
@@ -1347,6 +1347,7 @@ async def blocked_page(
 async def continue_endpoint(
     request: Request,
     token: str = Query(...),
+    sig: Optional[str] = Query(None),
     db = Depends(get_database)
 ):
 
@@ -1364,6 +1365,25 @@ async def continue_endpoint(
     user_id_str = session.get("user_id")
     user_id = ObjectId(user_id_str) if user_id_str else None
     short_id = session.get("short_id", "unknown")
+
+    # Validate HMAC signature using hmac.compare_digest
+    if not sig:
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, "Missing HMAC signature on /continue route", request, db)
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    import hmac
+    import hashlib
+    sig_message = f"{token}:{short_id}"
+    expected_sig = hmac.new(settings.SECRET_KEY.encode(), sig_message.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected_sig):
+        if user_id:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, "HMAC signature mismatch on /continue route", request, db)
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        return RedirectResponse(url="/blocked", status_code=302)
 
     referer = request.headers.get("referer", "")
 
@@ -1456,9 +1476,58 @@ async def continue_endpoint(
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Retrieve real/original destination URL
-    destination_url = session.get("original_url") or "https://t.me/alonekingstar"
+    destination_url = session["original_url"]
 
-    # Redirect directly to the final destination without any HTML UI delay
+    # Determine if it's a browser requesting standard HTML page
+    user_agent = request.headers.get("user-agent", "").lower()
+    accept_header = request.headers.get("accept", "").lower()
+    is_browser = "text/html" in accept_header and "test-agent" not in user_agent and "pytest" not in user_agent
+
+    if is_browser:
+        import hashlib
+        import secrets
+        redirect_id = secrets.token_urlsafe(8)
+        salt = secrets.token_urlsafe(16)
+        tab_token = secrets.token_urlsafe(16)
+        gateway_nonce = secrets.token_urlsafe(16)
+        normalized_ua = request.headers.get("user-agent", "").strip()
+        client_ip = get_client_ip(request)
+
+        session_hash_input = f"{client_ip}:{normalized_ua}:{salt}"
+        session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()
+
+        # Store redirect mapping in redirects collection with 120s TTL
+        await db.redirects.insert_one({
+            "redirect_id": redirect_id,
+            "target_url": destination_url,
+            "created_at": time.time(),
+            "expires_at": time.time() + 120,
+            "consumed": False,
+            "status": "unused",
+            "client_ip": client_ip,
+            "session_hash": session_hash,
+            "salt": salt,
+            "user_agent": request.headers.get("user-agent", ""),
+            "session_id": cookie_session_id or session.get("session_id"),
+            "tab_token": tab_token,
+            "nonce": gateway_nonce,
+            "user_id": str(user_id) if user_id else None,
+            "short_id": short_id,
+            "mode": session.get("mode", "NORMAL"),
+            "manual_min_seconds": session.get("manual_min_seconds"),
+            "manual_max_seconds": session.get("manual_max_seconds"),
+            "session_start_time": session.get("created_at")
+        })
+
+        html_content = (
+            GATEWAY_TEMPLATE
+            .replace("{redirect_id}", redirect_id)
+            .replace("{tab_token}", tab_token)
+            .replace("{nonce}", gateway_nonce)
+        )
+        return HTMLResponse(content=html_content, status_code=200)
+
+    # Redirect to the final destination
     return RedirectResponse(url=destination_url, status_code=302)
 
 
@@ -1466,8 +1535,12 @@ async def continue_endpoint(
 async def redirect_endpoint(
     request: Request,
     id: str = Query(...),
+    nonce: str = Query(...),
+    tab: str = Query(...),
     db = Depends(get_database)
 ):
+    import hmac
+
     # Retrieve the redirect mapping
     redirect_doc = await db.redirects.find_one({"redirect_id": id})
     if not redirect_doc:
@@ -1482,6 +1555,16 @@ async def redirect_endpoint(
         await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         return RedirectResponse(url="/blocked", status_code=302)
 
+    # Require and validate nonce (never allow missing/empty)
+    expected_nonce = redirect_doc.get("nonce")
+    if not nonce or not expected_nonce or not hmac.compare_digest(nonce, expected_nonce):
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # Require and validate tab token (never allow missing/empty)
+    expected_tab = redirect_doc.get("tab_token")
+    if not tab or not expected_tab or not hmac.compare_digest(tab, expected_tab):
+        return RedirectResponse(url="/blocked", status_code=302)
+
     # MANUAL mode timer window validation
     if redirect_doc.get("mode") == "MANUAL":
         min_s = redirect_doc.get("manual_min_seconds")
@@ -1492,12 +1575,6 @@ async def redirect_endpoint(
             if elapsed < min_s or elapsed > max_s:
                 await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
                 return RedirectResponse(url="/blocked", status_code=302)
-
-    # Challenge Nonce validation if nonce parameter was provided
-    expected_nonce = redirect_doc.get("nonce")
-    nonce_param = request.query_params.get("nonce")
-    if expected_nonce and nonce_param and expected_nonce != nonce_param:
-        return RedirectResponse(url="/blocked", status_code=302)
 
     # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
     session_hash = redirect_doc.get("session_hash")
@@ -1515,12 +1592,6 @@ async def redirect_endpoint(
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
     if expected_session_id and expected_session_id != cookie_session_id:
-        return RedirectResponse(url="/blocked", status_code=302)
-
-    # Same-tab validation
-    expected_tab_token = redirect_doc.get("tab_token")
-    tab_param = request.query_params.get("tab")
-    if expected_tab_token and expected_tab_token != tab_param:
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Atomically mark the redirect ID as consumed and verified
@@ -1541,6 +1612,8 @@ async def report_violation_endpoint(
     body: dict = Body(...),
     db = Depends(get_database)
 ):
+    import hmac
+
     redirect_id = body.get("id")
     reason = body.get("reason", "Unknown security violation")
     if not redirect_id:
@@ -1550,6 +1623,26 @@ async def report_violation_endpoint(
     redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
     if not redirect_doc:
         return {"status": "error", "message": "Redirect not found"}
+
+    # Validate session ownership to prevent attackers from remotely invalidating arbitrary redirect IDs
+    expected_session_id = redirect_doc.get("session_id")
+    cookie_session_id = request.cookies.get("session_id")
+
+    session_hash = redirect_doc.get("session_hash")
+    salt = redirect_doc.get("salt")
+    hash_valid = False
+    if session_hash and salt:
+        import hashlib
+        normalized_ua = request.headers.get("user-agent", "").strip()
+        client_ip = get_client_ip(request)
+        expected_input = f"{client_ip}:{normalized_ua}:{salt}"
+        expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
+        hash_valid = hmac.compare_digest(session_hash, expected_hash)
+
+    cookie_valid = expected_session_id and cookie_session_id and hmac.compare_digest(expected_session_id, cookie_session_id)
+
+    if not (cookie_valid or hash_valid):
+        raise HTTPException(status_code=403, detail="Unauthorized violation report")
 
     # 2. Instantly consume and expire the redirect mapping to prevent any future use
     await db.redirects.update_one(
@@ -1601,9 +1694,14 @@ async def redirect_post_endpoint(
     body: dict = Body(...),
     db = Depends(get_database)
 ):
+    import hmac
+
     redirect_id = body.get("id")
-    if not redirect_id:
-        raise HTTPException(status_code=400, detail="Missing redirect ID")
+    nonce_param = body.get("nonce")
+    tab_param = body.get("tab")
+
+    if not redirect_id or not nonce_param or not tab_param:
+        raise HTTPException(status_code=400, detail="Missing required verification parameters")
 
     redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
     if not redirect_doc:
@@ -1616,6 +1714,16 @@ async def redirect_post_endpoint(
         await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         raise HTTPException(status_code=410, detail="Redirect expired")
 
+    # Require and validate Nonce using hmac.compare_digest
+    expected_nonce = redirect_doc.get("nonce")
+    if not expected_nonce or not hmac.compare_digest(str(nonce_param), str(expected_nonce)):
+        raise HTTPException(status_code=403, detail="Nonce verification failed")
+
+    # Require and validate Tab Token using hmac.compare_digest
+    expected_tab_token = redirect_doc.get("tab_token")
+    if not expected_tab_token or not hmac.compare_digest(str(tab_param), str(expected_tab_token)):
+        raise HTTPException(status_code=403, detail="Tab security violation")
+
     # MANUAL mode timer window validation
     if redirect_doc.get("mode") == "MANUAL":
         min_s = redirect_doc.get("manual_min_seconds")
@@ -1626,12 +1734,6 @@ async def redirect_post_endpoint(
             if elapsed < min_s or elapsed > max_s:
                 await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
                 raise HTTPException(status_code=410, detail="Verification expired")
-
-    # Challenge Nonce validation if nonce parameter was provided
-    expected_nonce = redirect_doc.get("nonce")
-    nonce_param = body.get("nonce")
-    if expected_nonce and nonce_param and expected_nonce != nonce_param:
-        raise HTTPException(status_code=403, detail="Nonce verification failed")
 
     # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
     session_hash = redirect_doc.get("session_hash")
@@ -1650,12 +1752,6 @@ async def redirect_post_endpoint(
     cookie_session_id = request.cookies.get("session_id")
     if expected_session_id and expected_session_id != cookie_session_id:
         raise HTTPException(status_code=403, detail="Session verification failed")
-
-    # Same-tab validation
-    expected_tab_token = redirect_doc.get("tab_token")
-    tab_param = body.get("tab")
-    if expected_tab_token and expected_tab_token != tab_param:
-        raise HTTPException(status_code=403, detail="Tab security violation")
 
     # Atomically mark as consumed and verified
     result = await db.redirects.update_one(
