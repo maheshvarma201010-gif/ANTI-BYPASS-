@@ -1585,13 +1585,13 @@ async def redirect_endpoint(
         client_ip = get_client_ip(request)
         expected_input = f"{client_ip}:{normalized_ua}:{salt}"
         expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
-        if session_hash != expected_hash:
+        if not hmac.compare_digest(session_hash, expected_hash):
             return RedirectResponse(url="/blocked", status_code=302)
 
     # Same-session validation
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
-    if expected_session_id and expected_session_id != cookie_session_id:
+    if expected_session_id and cookie_session_id and not hmac.compare_digest(expected_session_id, cookie_session_id):
         return RedirectResponse(url="/blocked", status_code=302)
 
     # Atomically mark the redirect ID as consumed and verified
@@ -1744,13 +1744,13 @@ async def redirect_post_endpoint(
         client_ip = get_client_ip(request)
         expected_input = f"{client_ip}:{normalized_ua}:{salt}"
         expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
-        if session_hash != expected_hash:
+        if not hmac.compare_digest(session_hash, expected_hash):
             raise HTTPException(status_code=403, detail="Session verification failed")
 
     # Same-session validation
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
-    if expected_session_id and expected_session_id != cookie_session_id:
+    if expected_session_id and cookie_session_id and not hmac.compare_digest(expected_session_id, cookie_session_id):
         raise HTTPException(status_code=403, detail="Session verification failed")
 
     # Atomically mark as consumed and verified
