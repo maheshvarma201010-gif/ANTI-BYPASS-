@@ -30,20 +30,24 @@ function validateTargetUrl(targetUrl) {
 async function shortenWithArolinks(targetUrl, apiKey = process.env.AROLINKS_API_KEY, endpoint = process.env.AROLINKS_ENDPOINT || 'https://arolinks.com/api') {
   validateTargetUrl(targetUrl);
 
-  if (!apiKey) {
-    throw new Error('AROLINKS_API_KEY is not configured');
-  }
-
   const apiEndpoint = endpoint || 'https://arolinks.com/api';
   const url = new URL(apiEndpoint);
-  url.searchParams.set('api', apiKey);
   url.searchParams.set('url', targetUrl);
+
+  const headers = {
+    'Accept': 'application/json, text/plain, */*',
+    'User-Agent': 'curl/7.88.1',
+    'Referer': apiEndpoint
+  };
+
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+    headers['X-API-Key'] = apiKey;
+  }
 
   const response = await fetch(url.toString(), {
     method: 'GET',
-    headers: {
-      'Accept': 'application/json, text/plain, */*'
-    }
+    headers: headers
   });
 
   if (!response.ok) {

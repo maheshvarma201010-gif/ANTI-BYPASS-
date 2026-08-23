@@ -27,6 +27,8 @@ from urllib.parse import urlparse
 from app.core.referer import is_allowed_referer, is_related_domain, is_whitelisted_user, is_development_environment, get_user_verification_history, is_legitimate_no_referer
 from bson import ObjectId
 
+BYPASS_REDIRECT_URL = "https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target=aHR0cHM6Ly9wcm90ZWN0LmdrYm90ei5xenouaW8=&hash=6db8f56a99665ffb"
+
 BYPASS_DETECTED_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -864,6 +866,7 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
         logger.error(f"Failed to send Telegram notification: {e}")
 
 def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
+    import base64
     from urllib.parse import unquote, urlparse
 
     raw_referer = request.headers.get("referer", "")
@@ -871,6 +874,9 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
     raw_url = str(request.url)
     url_dec = unquote(unquote(raw_url)).lower()
+
+    if "esfje8ly9li" in url_dec or "gu6wtmbqece" in url_dec or "esfje8ly9li" in referer_dec or "gu6wtmbqece" in referer_dec:
+        return True, "Legacy bypass detected URL pattern matched"
 
     # Dynamic domain matching against request base URL or configured BASE_URL
     app_netlocs = set()
@@ -1073,11 +1079,19 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
             return True, "Bypass query parameter pattern detected"
 
         # Explicit bypass tool parameter check (e.g., target pointing to external unauthorized bypass tools)
-        if k_dec == "target" and ("rolexoriginalstg" in v_dec or "gkbotz" in v_dec):
+        v_b64_dec = ""
+        try:
+            v_b64_dec = base64.b64decode(v).decode('utf-8', errors='ignore').lower()
+        except Exception:
+            pass
+
+        v_combined = f"{v_dec} {v_b64_dec}"
+
+        if ("rolexoriginalstg" in v_combined or "gkbotz" in v_combined or "empty-workers-playground" in v_combined or "6db8f56a99665ffb" in v_combined):
             return True, "Unauthorized bypass target parameter detected"
 
         for kw in banned_query_keywords:
-            if kw in k_dec or kw in v_dec:
+            if kw in k_dec or kw in v_combined:
                 return True, f"Banned userscript pattern '{kw}' detected in query parameters"
 
     # Bot User-Agent detection
@@ -1105,12 +1119,9 @@ async def blocked_page(
             await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
 
-    # If there are any query parameters, redirect to clean /blocked URL to strip them from the address bar
-    if request.query_params:
-        return RedirectResponse(url="/blocked", status_code=302)
-    return HTMLResponse(
-        content=BYPASS_DETECTED_TEMPLATE,
-        status_code=403
+    return RedirectResponse(
+        url=BYPASS_REDIRECT_URL,
+        status_code=302
     )
 
 @app.get("/continue")
