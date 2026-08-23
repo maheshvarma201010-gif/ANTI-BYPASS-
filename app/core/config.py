@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     ADMIN_IDS: str = ""
     IMAGE_URLS: str = ""
 
+    # Shorteners configuration
+    AROLINKS_API_KEY: Optional[str] = ""
+    AROLINKS_ENDPOINT: str = "https://arolinks.com/api"
+    VPLINKS_API_KEY: Optional[str] = ""
+    VPLINKS_ENDPOINT: str = "https://vplinks.in/api"
+    PRIMARY_SHORTENER: str = "arolinks"
+
     # Challenge settings
     CHALLENGE_EXPIRY_SECONDS: int = 60
     TOKEN_EXPIRY_SECONDS: int = 300

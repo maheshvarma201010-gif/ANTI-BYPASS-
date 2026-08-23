@@ -941,6 +941,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
             return True, "Bypass query parameter pattern detected"
 
+        # Explicit bypass tool parameter check (e.g., target pointing to external unauthorized bypass tools)
+        if k_dec == "target" and ("rolexoriginalstg" in v_dec or "gkbotz" in v_dec):
+            return True, "Unauthorized bypass target parameter detected"
+
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
                 return True, f"Banned userscript pattern '{kw}' detected in query parameters"
@@ -1372,13 +1376,20 @@ def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
     if not shortener_base_url:
         return True
 
+    from urllib.parse import unquote, urlparse
+
+    shortener_clean = unquote(shortener_base_url).strip().lower()
+
+    # Special handling for Arolinks & VPLinks and shorteners where Referer header is stripped or unreliable
+    if "arolinks" in shortener_clean or "vplinks" in shortener_clean:
+        if not referer:
+            # Allow requests when referer header is omitted by Arolinks/VPLinks browser redirects
+            return True
+
     if not referer:
         return False
 
-    from urllib.parse import unquote, urlparse
-
     ref_clean = unquote(referer).strip()
-    shortener_clean = unquote(shortener_base_url).strip()
 
     try:
         ref_parsed = urlparse(ref_clean if "://" in ref_clean else f"http://{ref_clean}")
@@ -1510,6 +1521,46 @@ async def original_shortlink(
         max_age=120
     )
     return response
+
+@app.get("/verify")
+async def verify_endpoint(
+    request: Request,
+    target: Optional[str] = Query(None),
+    hash: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
+    db = Depends(get_database)
+):
+    # Enforce backend protection so users cannot directly bypass or access protected verification endpoints
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    if is_bypass:
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # Do not rely only on Referer/Origin; require server-side token or valid target+hash token
+    if not token and not (target and hash):
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    if token:
+        # Validate HMAC-signed server-side token or active session token
+        session = await db.sessions.find_one({"token": token})
+        if not session or session.get("consumed", False):
+            return RedirectResponse(url="/blocked", status_code=302)
+        # Redirect valid token to continue
+        return RedirectResponse(url=f"/continue?token={token}", status_code=302)
+
+    if target and hash:
+        import hmac, hashlib
+        expected_hash = hashlib.sha256(f"{target}:{settings.SECRET_KEY}".encode()).hexdigest()[:16]
+        if not hmac.compare_digest(hash, expected_hash):
+            return RedirectResponse(url="/blocked", status_code=302)
+
+        try:
+            decoded_target = base64.b64decode(target).decode('utf-8', errors='ignore')
+            if decoded_target.startswith("http://") or decoded_target.startswith("https://"):
+                return RedirectResponse(url=decoded_target, status_code=302)
+        except Exception:
+            pass
+
+    return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
 
 @app.get("/health")
 async def health_check():
