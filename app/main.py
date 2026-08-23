@@ -875,9 +875,6 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     raw_url = str(request.url)
     url_dec = unquote(unquote(raw_url)).lower()
 
-    if "esfje8ly9li" in url_dec or "gu6wtmbqece" in url_dec or "esfje8ly9li" in referer_dec or "gu6wtmbqece" in referer_dec:
-        return True, "Legacy bypass detected URL pattern matched"
-
     # Dynamic domain matching against request base URL or configured BASE_URL
     app_netlocs = set()
     if request.base_url and request.base_url.netloc:
