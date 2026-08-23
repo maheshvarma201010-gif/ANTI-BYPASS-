@@ -100,11 +100,13 @@ async def create_protected_link(
     shortener_api = decrypt_url(final_shortener_config['api_key'])
 
     short_id = secrets.token_urlsafe(8)
+    st_token = secrets.token_urlsafe(16)
 
     # 1. Save the mapping
     protected_link = {
         "user_id": str(user['_id']),
         "short_id": short_id,
+        "st_token": st_token,
         "original_url": url,
         "shortener_base_url": shortener_base,
         "created_at": datetime.utcnow(),
@@ -119,7 +121,7 @@ async def create_protected_link(
 
     # Our bridge URL that the shortener will redirect to
     current_base = str(request.base_url).rstrip('/')
-    bridge_url = f"{current_base}/{short_id}"
+    bridge_url = f"{current_base}/{short_id}?st_token={st_token}"
 
     api_url = f"{shortener_base}/api"
     params = {

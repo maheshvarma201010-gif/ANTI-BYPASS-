@@ -1372,18 +1372,19 @@ def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
     return False
 
 
-def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
+def is_valid_shortener_referer(referer: str, shortener_base_url: str, request_st_token: Optional[str] = None, expected_st_token: Optional[str] = None) -> bool:
     if not shortener_base_url:
         return True
 
+    import hmac
     from urllib.parse import unquote, urlparse
 
     shortener_clean = unquote(shortener_base_url).strip().lower()
 
-    # Special handling for Arolinks & VPLinks and shorteners where Referer header is stripped or unreliable
-    if "arolinks" in shortener_clean or "vplinks" in shortener_clean:
-        if not referer:
-            # Allow requests when referer header is omitted by Arolinks/VPLinks browser redirects
+    # Universal shortener flow token (st_token) validation across ALL shortener providers:
+    # If a valid server-issued flow token is provided and matches expected_st_token, accept it even if Referer is stripped by the browser/proxy.
+    if expected_st_token and request_st_token:
+        if hmac.compare_digest(request_st_token, expected_st_token):
             return True
 
     if not referer:
@@ -1453,12 +1454,14 @@ async def original_shortlink(
 
     # ============== REFERER/ORIGIN VALIDATION ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+    st_token_param = request.query_params.get("st_token")
+    expected_st_token = link.get("st_token")
 
     if shortener_base_url:
-        if not is_valid_shortener_referer(referer, shortener_base_url):
+        if not is_valid_shortener_referer(referer, shortener_base_url, request_st_token=st_token_param, expected_st_token=expected_st_token):
             ref_str = referer if referer else "Missing"
             shortener_domain = urlparse(shortener_base_url).netloc or shortener_base_url
-            reason = f"Bypass detected: Missing or invalid Referer (expected '{shortener_domain}', got '{ref_str}')"
+            reason = f"Bypass detected: Missing or invalid Referer/Flow Token (expected '{shortener_domain}', got '{ref_str}')"
 
             await db.users.update_one(
                 {"_id": user_id},
