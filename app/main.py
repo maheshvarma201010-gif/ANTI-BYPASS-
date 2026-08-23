@@ -919,16 +919,147 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
     # Check query parameters specifically for nicktrick and userscript patterns
     banned_query_keywords = [
-        "nicktrick",
-        "javascript:",
-        "564048",
-        "smart nicktrick",
-        "greasyfork",
-        "tampermonkey",
-        "violentmonkey",
-        "stealth final",
-        "ddxbypass",
-        "bypassbot"
+    "arolinks.com",
+    "arolinks",
+    "gplinks.co",
+    "gplinks",
+    "urlinkshort.in",
+    "urlinkshort",
+    ".co.cu",
+    "shrinkme.io",
+    "shrinkearn.com",
+    "shrink.pe",
+    "exe.io",
+    "ouo.io",
+    "ouo.press",
+    "adf.ly",
+    "bc.vc",
+    "linkvertise.com",
+    "link-target.net",
+    "link-center.net",
+    "link1s.com",
+    "link1s.net",
+    "link4m.com",
+    "link4sub.com",
+    "linksfly.me",
+    "linkbucks.com",
+    "linkshrink.net",
+    "linkshrink.com",
+    "linkrex.net",
+    "linkspy.cc",
+    "linkjust.com",
+    "linkdrop.net",
+    "link2me.in",
+    "link2share.com",
+    "linkto.net",
+    "linksly.co",
+    "linkshrink.net",
+    "linkvertise.com",
+    "adshort.co",
+    "adshort.in",
+    "adshort.xyz",
+    "adfoc.us",
+    "adshrink.it",
+    "adshrink.net",
+    "adshorte.com",
+    "adshorti.com",
+    "adshrink.xyz",
+    "bcvc.live",
+    "clk.sh",
+    "clk.wiki",
+    "clicksfly.com",
+    "clicksfly.me",
+    "clicks.pw",
+    "clicksfly.link",
+    "clickadilla.com",
+    "cuty.io",
+    "cuty.me",
+    "droplink.co",
+    "droplink.in",
+    "droplink.xyz",
+    "earnlinks.in",
+    "earnlinks.com",
+    "earnlink.in",
+    "f1url.com",
+    "fc.lc",
+    "gplinks.in",
+    "gplinks.co",
+    "gplinks.me",
+    "gplinks.net",
+    "ikr.in",
+    "insfly.me",
+    "insfly.in",
+    "link4sub.com",
+    "link4sub.net",
+    "linkbux.com",
+    "linkfly.to",
+    "linkmake.in",
+    "linkneverdie.com",
+    "linkpays.in",
+    "links2u.com",
+    "linksly.co",
+    "linkvertise.com",
+    "linkzip.net",
+    "mitly.us",
+    "mitly.in",
+    "mshort.io",
+    "ouo.io",
+    "ouo.press",
+    "ouo.today",
+    "payskip.org",
+    "rekonise.com",
+    "rocklinks.net",
+    "rocklinks.co",
+    "shrinkearn.com",
+    "shrinkme.io",
+    "shrinkme.us",
+    "shrink.pe",
+    "shrinkurl.org",
+    "short2url.in",
+    "shorti.io",
+    "shortino.link",
+    "shortlink.co",
+    "shortlink.to",
+    "shortlyst.com",
+    "shortzon.com",
+    "slink.in",
+    "slink.bid",
+    "slinkshort.com",
+    "sub2get.com",
+    "sub2unlock.com",
+    "sub2unlock.io",
+    "sub2unlock.net",
+    "tpi.li",
+    "try2link.com",
+    "ulvis.net",
+    "urlcash.net",
+    "urlcut.com",
+    "urlcut.in",
+    "urldra.in",
+    "urlgo.me",
+    "urlink.io",
+    "urlinkshort.in",
+    "urlshortx.com",
+    "urlspay.in",
+    "urlz.fr",
+    "v2links.com",
+    "vlink.in",
+    "wefly.me",
+    "wlinks.in",
+    "xpshort.com",
+    "ytsubme.com",
+    "zshort.in",
+    "zws.im",
+    "nicktrick",
+    "javascript:",
+    "564048",
+    "smart nicktrick",
+    "greasyfork",
+    "tampermonkey",
+    "violentmonkey",
+    "stealth final",
+    "ddxbypass",
+    "bypassbot"
     ]
 
     for k, v in request.query_params.items():
@@ -940,6 +1071,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
         if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
             return True, "Bypass query parameter pattern detected"
+
+        # Explicit bypass tool parameter check (e.g., target pointing to external unauthorized bypass tools)
+        if k_dec == "target" and ("rolexoriginalstg" in v_dec or "gkbotz" in v_dec):
+            return True, "Unauthorized bypass target parameter detected"
 
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
@@ -1368,17 +1503,25 @@ def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
     return False
 
 
-def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
+def is_valid_shortener_referer(referer: str, shortener_base_url: str, request_st_token: Optional[str] = None, expected_st_token: Optional[str] = None) -> bool:
     if not shortener_base_url:
         return True
+
+    import hmac
+    from urllib.parse import unquote, urlparse
+
+    shortener_clean = unquote(shortener_base_url).strip().lower()
+
+    # Universal shortener flow token (st_token) validation across ALL shortener providers:
+    # If a valid server-issued flow token is provided and matches expected_st_token, accept it even if Referer is stripped by the browser/proxy.
+    if expected_st_token and request_st_token:
+        if hmac.compare_digest(request_st_token, expected_st_token):
+            return True
 
     if not referer:
         return False
 
-    from urllib.parse import unquote, urlparse
-
     ref_clean = unquote(referer).strip()
-    shortener_clean = unquote(shortener_base_url).strip()
 
     try:
         ref_parsed = urlparse(ref_clean if "://" in ref_clean else f"http://{ref_clean}")
@@ -1442,12 +1585,14 @@ async def original_shortlink(
 
     # ============== REFERER/ORIGIN VALIDATION ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+    st_token_param = request.query_params.get("st_token")
+    expected_st_token = link.get("st_token")
 
     if shortener_base_url:
-        if not is_valid_shortener_referer(referer, shortener_base_url):
+        if not is_valid_shortener_referer(referer, shortener_base_url, request_st_token=st_token_param, expected_st_token=expected_st_token):
             ref_str = referer if referer else "Missing"
             shortener_domain = urlparse(shortener_base_url).netloc or shortener_base_url
-            reason = f"Bypass detected: Missing or invalid Referer (expected '{shortener_domain}', got '{ref_str}')"
+            reason = f"Bypass detected: Missing or invalid Referer/Flow Token (expected '{shortener_domain}', got '{ref_str}')"
 
             await db.users.update_one(
                 {"_id": user_id},
@@ -1510,6 +1655,46 @@ async def original_shortlink(
         max_age=120
     )
     return response
+
+@app.get("/verify")
+async def verify_endpoint(
+    request: Request,
+    target: Optional[str] = Query(None),
+    hash: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
+    db = Depends(get_database)
+):
+    # Enforce backend protection so users cannot directly bypass or access protected verification endpoints
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    if is_bypass:
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # Do not rely only on Referer/Origin; require server-side token or valid target+hash token
+    if not token and not (target and hash):
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    if token:
+        # Validate HMAC-signed server-side token or active session token
+        session = await db.sessions.find_one({"token": token})
+        if not session or session.get("consumed", False):
+            return RedirectResponse(url="/blocked", status_code=302)
+        # Redirect valid token to continue
+        return RedirectResponse(url=f"/continue?token={token}", status_code=302)
+
+    if target and hash:
+        import hmac, hashlib
+        expected_hash = hashlib.sha256(f"{target}:{settings.SECRET_KEY}".encode()).hexdigest()[:16]
+        if not hmac.compare_digest(hash, expected_hash):
+            return RedirectResponse(url="/blocked", status_code=302)
+
+        try:
+            decoded_target = base64.b64decode(target).decode('utf-8', errors='ignore')
+            if decoded_target.startswith("http://") or decoded_target.startswith("https://"):
+                return RedirectResponse(url=decoded_target, status_code=302)
+        except Exception:
+            pass
+
+    return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
 
 @app.get("/health")
 async def health_check():
