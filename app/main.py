@@ -1125,17 +1125,6 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         if base_parsed.netloc:
             app_netlocs.add(base_parsed.netloc.lower())
 
-    # Check for direct bypass tool Referers pointing to internal /blocked routes
-    if raw_referer:
-        try:
-            ref_parsed = urlparse(raw_referer)
-            ref_path = ref_parsed.path.lower()
-
-            if "/blocked" in ref_path:
-                return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
-        except Exception:
-            pass
-
     # Explicit userscript, bookmarklet (nicktrick), and bypass tool signatures
     banned_keywords = [
         "nicktrick",
@@ -1205,7 +1194,7 @@ async def verify_page(
     # Check for bypass tools, userscripts, or bot User-Agents
     is_bypass, bypass_reason = detect_userscript_bypass(request)
     if is_bypass:
-        return RedirectResponse(url="/blocked", status_code=302)
+        return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
 
     return HTMLResponse(
         content=VERIFICATION_PAGE_TEMPLATE,
@@ -1217,7 +1206,7 @@ async def blocked_page(
     request: Request,
     db = Depends(get_database)
 ):
-    # Check if a token, short_id, or redirect ID was passed in query string or Referer when a bypass URL was copied or expanded by Telegram/bots
+    # Check if a token, short_id, or redirect ID was passed in query string when a bypass URL was copied or expanded by Telegram/bots
     token = request.query_params.get("token")
 
     if token:
@@ -1229,20 +1218,36 @@ async def blocked_page(
             await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
 
-    # If there are any query parameters, redirect to clean /blocked URL to strip them from the address bar
-    if request.query_params:
-        return RedirectResponse(url="/blocked", status_code=302)
+    # Check for explicit bypass tools, userscripts, or bot User-Agents
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    if is_bypass:
+        return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
+
     return HTMLResponse(
-        content=BYPASS_DETECTED_TEMPLATE,
-        status_code=403
+        content=VERIFICATION_PAGE_TEMPLATE,
+        status_code=200
     )
 
 @app.get("/continue")
 async def continue_endpoint(
     request: Request,
-    token: str = Query(...),
+    token: Optional[str] = Query(None),
     db = Depends(get_database)
 ):
+    # Check for explicit userscript/bypass tool indicators first
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    if is_bypass:
+        return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
+
+    target = request.query_params.get("target")
+    hash_param = request.query_params.get("hash")
+
+    # If target or hash query parameters are present, or if token is missing, serve the verification page
+    if target or hash_param or not token:
+        return HTMLResponse(
+            content=VERIFICATION_PAGE_TEMPLATE,
+            status_code=200
+        )
 
     # Retrieve session bound to token first so we can identify the link shortener
     session = await db.sessions.find_one({"token": token})
