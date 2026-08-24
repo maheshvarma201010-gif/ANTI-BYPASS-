@@ -500,9 +500,28 @@ async def handle_validation(
         referer_valid = False
         referer_reason = ""
         
-        # Approach 1: Direct match
-        if shortener_domain and shortener_domain in referer:
-            referer_valid = True
+        # Approach 1: Direct domain match using root domain check
+        if referer and shortener_domain:
+            ref_parsed = urlparse(referer if "://" in referer else f"http://{referer}")
+            ref_netloc = ref_parsed.netloc.lower().split(":")[0]
+            short_netloc = shortener_domain.lower().split(":")[0]
+
+            def get_root_domain(domain: str) -> str:
+                domain = domain.split(":")[0]
+                parts = [p for p in domain.split(".") if p]
+                common_tlds = {
+                    "com", "co", "net", "org", "info", "io", "in", "xyz",
+                    "biz", "us", "uk", "cc", "me", "top", "online", "site",
+                    "live", "club", "tech", "work"
+                }
+                while len(parts) > 1 and parts[-1] in common_tlds:
+                    parts = parts[:-1]
+                return parts[-1] if parts else domain
+
+            ref_root = get_root_domain(ref_netloc)
+            short_root = get_root_domain(short_netloc)
+            if ref_netloc == short_netloc or ref_netloc.endswith("." + short_netloc) or (ref_root and short_root and ref_root == short_root):
+                referer_valid = True
         else:
             # Approach 2: Check if referer is a known allowed source
             referer_valid = await is_allowed_referer(referer, db)
