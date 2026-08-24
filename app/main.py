@@ -1233,13 +1233,33 @@ async def continue_endpoint(
 ):
     is_bypass, bypass_reason = detect_userscript_bypass(request)
     if is_bypass:
+        if token:
+            session = await db.sessions.find_one({"token": token})
+            if session and isinstance(session, dict) and session.get("user_id"):
+                user_id = ObjectId(session["user_id"])
+                s_id = session.get("short_id", "unknown")
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, s_id, f"Userscript / Bypass Tool detected on /continue ({bypass_reason})", request, db)
+                await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
 
     target = request.query_params.get("target")
     hash_param = request.query_params.get("hash")
 
-    # If target or hash query parameters are present, or if token is missing, serve the continue verification page
-    if target or hash_param or not token:
+    # If token is present but hash parameter is missing/invalid, expire session instantly and block
+    if token and not hash_param:
+        session = await db.sessions.find_one({"token": token})
+        if session and isinstance(session, dict):
+            if session.get("user_id"):
+                user_id = ObjectId(session["user_id"])
+                s_id = session.get("short_id", "unknown")
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, s_id, "Missing hash parameter on /continue - bypass attempt blocked", request, db)
+            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        return RedirectResponse(url="/blocked", status_code=302)
+
+    # If target parameter is present, serve the continue verification page UI
+    if target or not token:
         return HTMLResponse(
             content=CONTINUE_PAGE_TEMPLATE,
             status_code=200
@@ -1757,8 +1777,9 @@ async def original_shortlink(
         }
     )
 
-    # 3. Set the session ID cookie and redirect to continuation endpoint
-    response = RedirectResponse(url=f"/continue?token={token}", status_code=302)
+    # 3. Set the session ID cookie and redirect to continuation endpoint with hash
+    expected_hash = "8ad6e37025674688"
+    response = RedirectResponse(url=f"/continue?token={token}&hash={expected_hash}", status_code=302)
     is_secure = request.url.scheme == "https"
     response.set_cookie(
         key="session_id",
