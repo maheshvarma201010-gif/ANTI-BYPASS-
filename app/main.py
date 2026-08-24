@@ -864,6 +864,7 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
         logger.error(f"Failed to send Telegram notification: {e}")
 
 def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
+    import base64
     from urllib.parse import unquote, urlparse
 
     raw_referer = request.headers.get("referer", "")
@@ -1072,10 +1073,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
             return True, "Bypass query parameter pattern detected"
 
-        # Explicit bypass tool parameter check (e.g., target pointing to external unauthorized bypass tools)
-        if k_dec == "target" and ("rolexoriginalstg" in v_dec or "gkbotz" in v_dec):
-            return True, "Unauthorized bypass target parameter detected"
-
+        # Check query parameter keys and values against banned keywords
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
                 return True, f"Banned userscript pattern '{kw}' detected in query parameters"

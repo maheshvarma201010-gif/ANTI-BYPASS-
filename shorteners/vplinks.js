@@ -30,20 +30,24 @@ function validateTargetUrl(targetUrl) {
 async function shortenWithVplinks(targetUrl, apiKey = process.env.VPLINKS_API_KEY, endpoint = process.env.VPLINKS_ENDPOINT || 'https://vplinks.in/api') {
   validateTargetUrl(targetUrl);
 
-  if (!apiKey) {
-    throw new Error('VPLINKS_API_KEY is not configured');
-  }
-
   const apiEndpoint = endpoint || 'https://vplinks.in/api';
   const url = new URL(apiEndpoint);
-  url.searchParams.set('api', apiKey);
   url.searchParams.set('url', targetUrl);
+
+  const headers = {
+    'Accept': 'application/json, text/plain, */*',
+    'User-Agent': 'curl/7.88.1',
+    'Referer': apiEndpoint
+  };
+
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+    headers['X-API-Key'] = apiKey;
+  }
 
   const response = await fetch(url.toString(), {
     method: 'GET',
-    headers: {
-      'Accept': 'application/json, text/plain, */*'
-    }
+    headers: headers
   });
 
   if (!response.ok) {
