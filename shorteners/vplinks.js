@@ -19,9 +19,9 @@ function validateTargetUrl(targetUrl) {
     throw new Error('Bypass detected: Nicktrick parameter or JavaScript bookmarklet pattern present in target URL');
   }
 
-  // Check for specific bookmarklet script signatures
-  if (lowerUrl.includes('top!==self') || lowerUrl.includes('searchparams.get("nicktrick")') || lowerUrl.includes('564048')) {
-    throw new Error('Bypass detected: Nicktrick script signature present');
+  // Check for specific bookmarklet script signatures and bypass tool indicators
+  if (lowerUrl.includes('top!==self') || lowerUrl.includes('searchparams.get("nicktrick")') || lowerUrl.includes('564048') || lowerUrl.includes('ddxbypass') || lowerUrl.includes('bypassbot')) {
+    throw new Error('Bypass detected: Nicktrick script signature or bypass tool pattern present');
   }
 
   return true;

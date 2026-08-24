@@ -19,6 +19,9 @@ async def create_protected_link(
     url: str = Query(...),
     db = Depends(get_database)
 ):
+    if "nicktrick" in request.query_params:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid query parameter detected"})
+
     # Multi-shortener daisy-chain lookup to resolve the original raw external shortener config
     current_api = api
     final_shortener_config = None
