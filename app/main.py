@@ -1209,15 +1209,25 @@ async def blocked_page(
     db = Depends(get_database)
 ):
     token = request.query_params.get("token")
+    target = request.query_params.get("target")
+    hash_param = request.query_params.get("hash")
 
+    query = None
     if token:
-        session = await db.sessions.find_one({"token": token})
+        query = {"token": token}
+    elif target:
+        query = {"target": target}
+    elif hash_param:
+        query = {"hash": hash_param}
+
+    if db is not None and query:
+        session = await db.sessions.find_one(query)
         if session and session.get("user_id"):
             user_id = ObjectId(session["user_id"])
             s_id = session.get("short_id", "unknown")
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
-            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+            await send_bypass_notification(user_id, s_id, "Bypass parameters (token/target/hash) detected on /blocked - Session Expired Instantly", request, db)
+            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
 
     # Strictly return BYPASS_DETECTED_TEMPLATE without exposing target or hash in /blocked
     return HTMLResponse(
