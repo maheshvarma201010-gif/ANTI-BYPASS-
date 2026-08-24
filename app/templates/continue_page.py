@@ -57,7 +57,7 @@ CONTINUE_PAGE_TEMPLATE = """<!DOCTYPE html>
         .btn-success:hover { background: #1e7e34; }
         .btn-secondary { background: #6c757d; color: white; }
         .btn-secondary:hover { background: #5a6268; }
-        .hidden { display: none; }
+        .hidden { display: none !important; }
         .spinner {
             display: inline-block;
             width: 20px;
