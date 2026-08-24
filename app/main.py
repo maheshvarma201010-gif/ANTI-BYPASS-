@@ -1,6 +1,7 @@
 from typing import Optional
 from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
@@ -8,14 +9,13 @@ from app.core.referer import get_bridge_page_html, handle_validation
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-@app.middleware("http")
-async def block_nicktrick_middleware(request: Request, call_next):
-    if "nicktrick" in request.query_params:
-        return JSONResponse(
-            status_code=400,
-            content={"status": "error", "message": "Invalid query parameter detected"}
-        )
-    return await call_next(request)
+class BlockMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if "nicktrick" in str(request.url):
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid query parameter detected"})
+        return await call_next(request)
+
+app.add_middleware(BlockMiddleware)
 
 
 app.include_router(api_router)
