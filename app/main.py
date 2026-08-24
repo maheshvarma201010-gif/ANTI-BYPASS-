@@ -6,6 +6,9 @@ from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
+from app.templates.verify import VERIFY_PAGE_TEMPLATE
+from app.templates.continue_page import CONTINUE_PAGE_TEMPLATE
+from app.templates.blocked import BYPASS_DETECTED_TEMPLATE
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -752,6 +755,242 @@ GATEWAY_TEMPLATE = """
 </html>
 """
 
+VERIFICATION_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verification</title>
+    <style>
+        /* Add these styles */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #f5f5f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        .emoji { font-size: 64px; display: block; margin-bottom: 20px; }
+        h1 { font-size: 24px; margin-bottom: 15px; }
+        .error h1 { color: #dc3545; }
+        .success h1 { color: #28a745; }
+        .message { color: #666; font-size: 16px; line-height: 1.6; margin-bottom: 20px; }
+        .url-box {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            text-align: left;
+            word-break: break-all;
+        }
+        .url-box label { font-weight: 600; color: #333; display: block; margin-bottom: 5px; }
+        .url-box code { color: #495057; font-size: 13px; background: transparent; }
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            margin: 5px;
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-success:hover { background: #1e7e34; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover { background: #c82333; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-secondary:hover { background: #5a6268; }
+        .hidden { display: none; }
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- ERROR STATE - Shown when parameters are missing -->
+        <div id="errorState">
+            <span class="emoji">⚠️</span>
+            <h1 style="color: #dc3545;">Missing Verification Parameters</h1>
+            <div class="message">
+                The verification link is incomplete or invalid.<br>
+                Please ensure you have both <strong>target</strong> and <strong>hash</strong> parameters.
+            </div>
+            <div class="url-box">
+                <label>📋 Current URL:</label>
+                <code id="currentUrl">Loading...</code>
+            </div>
+            <div class="url-box">
+                <label>✅ Required Format:</label>
+                <code style="color: #28a745;">
+                    ?target=ENCODED_TARGET&hash=YOUR_HASH
+                </code>
+            </div>
+            <div id="referrerFix" class="hidden" style="margin: 15px 0;">
+                <div class="url-box" style="background: #d4edda; border: 1px solid #c3e6cb;">
+                    <label>🔍 Found Parameters in Referrer:</label>
+                    <button class="btn btn-success" id="fixLinkBtn">🔧 Fix Link Automatically</button>
+                </div>
+            </div>
+            <div style="margin-top: 20px;">
+                <button class="btn btn-primary" onclick="location.reload()">🔄 Retry</button>
+                <button class="btn btn-secondary" onclick="window.history.back()">⬅ Go Back</button>
+            </div>
+        </div>
+
+        <!-- SUCCESS STATE - Shown when parameters are valid -->
+        <div id="successState" class="hidden">
+            <span class="emoji">✅</span>
+            <h1 style="color: #28a745;">Verification Successful!</h1>
+            <div class="message" id="successMessage">Processing...</div>
+            <div class="spinner"></div>
+        </div>
+    </div>
+
+    <script>
+        // IMMEDIATE EXECUTION - Runs as soon as script loads
+        (function() {
+            const errorState = document.getElementById('errorState');
+            const successState = document.getElementById('successState');
+            const currentUrlElement = document.getElementById('currentUrl');
+
+            // Show current URL immediately
+            currentUrlElement.textContent = window.location.href;
+
+            // Get URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const target = urlParams.get('target');
+            const hash = urlParams.get('hash');
+
+            // Log for debugging
+            console.log('🔍 Checking verification parameters...');
+            console.log('Target:', target);
+            console.log('Hash:', hash);
+
+            // --- CHECK 1: Are parameters missing? ---
+            if (!target || !hash) {
+                // Show error state instantly
+                errorState.classList.remove('hidden');
+                successState.classList.add('hidden');
+                errorState.style.display = 'block';
+                successState.style.display = 'none';
+                console.error('❌ Missing parameters!');
+
+                // --- CHECK 2: Try to find parameters in referrer ---
+                const referrer = document.referrer;
+                if (referrer) {
+                    console.log('📎 Checking referrer:', referrer);
+                    try {
+                        const refUrl = new URL(referrer);
+                        const refTarget = refUrl.searchParams.get('target');
+                        const refHash = refUrl.searchParams.get('hash');
+
+                        if (refTarget && refHash) {
+                            console.log('✅ Found parameters in referrer!');
+                            const fixDiv = document.getElementById('referrerFix');
+                            fixDiv.classList.remove('hidden');
+
+                            // Build the correct URL
+                            const correctUrl = window.location.origin +
+                                             window.location.pathname +
+                                             '?target=' + encodeURIComponent(refTarget) +
+                                             '&hash=' + encodeURIComponent(refHash);
+
+                            // Fix button functionality
+                            document.getElementById('fixLinkBtn').onclick = function() {
+                                window.location.href = correctUrl;
+                            };
+
+                            // Show the correct URL
+                            const fixDivContent = fixDiv.querySelector('.url-box');
+                            fixDivContent.innerHTML = `
+                                <label>🔧 Correct URL:</label>
+                                <code style="color: #155724; font-size: 12px; word-break: break-all;">${correctUrl}</code>
+                                <br><br>
+                                <button class="btn btn-success" onclick="window.location.href='${correctUrl}'">
+                                    🔧 Click to Fix
+                                </button>
+                            `;
+                        }
+                    } catch (e) {
+                        console.log('ℹ️ Invalid referrer URL');
+                    }
+                }
+
+                return; // Stop execution - parameters missing
+            }
+
+            // --- PARAMETERS ARE PRESENT - Process verification ---
+            console.log('✅ Parameters found! Processing...');
+            errorState.classList.add('hidden');
+            successState.classList.remove('hidden');
+            errorState.style.display = 'none';
+            successState.style.display = 'block';
+
+            try {
+                // Decode target from base64
+                const decodedTarget = atob(decodeURIComponent(target));
+                console.log('📌 Decoded target:', decodedTarget);
+
+                // Verify hash
+                const expectedHash = '8ad6e37025674688';
+                if (hash === expectedHash) {
+                    document.getElementById('successMessage').textContent =
+                        `Redirecting to: ${decodedTarget}`;
+
+                    // Redirect after 2 seconds
+                    setTimeout(() => {
+                        window.location.href = decodedTarget;
+                    }, 2000);
+                } else {
+                    // Invalid hash
+                    document.querySelector('#successState .emoji').textContent = '❌';
+                    document.querySelector('#successState h1').style.color = '#dc3545';
+                    document.querySelector('#successState h1').textContent = 'Invalid Hash';
+                    document.getElementById('successMessage').textContent =
+                        'Verification hash does not match. Please check your link.';
+                }
+            } catch (error) {
+                console.error('❌ Verification error:', error);
+                document.querySelector('#successState .emoji').textContent = '❌';
+                document.querySelector('#successState h1').style.color = '#dc3545';
+                document.querySelector('#successState h1').textContent = 'Verification Failed';
+                document.getElementById('successMessage').textContent =
+                    'Failed to process verification. Invalid target format.';
+            }
+        })();
+    </script>
+</body>
+</html>
+"""
+
 import httpx
 import logging
 import asyncio
@@ -889,17 +1128,6 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         if base_parsed.netloc:
             app_netlocs.add(base_parsed.netloc.lower())
 
-    # Check for direct bypass tool Referers pointing to internal /blocked routes
-    if raw_referer:
-        try:
-            ref_parsed = urlparse(raw_referer)
-            ref_path = ref_parsed.path.lower()
-
-            if "/blocked" in ref_path:
-                return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
-        except Exception:
-            pass
-
     # Explicit userscript, bookmarklet (nicktrick), and bypass tool signatures
     banned_keywords = [
         "nicktrick",
@@ -961,12 +1189,25 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
     return False, ""
 
+@app.get("/verify")
+async def verify_page(
+    request: Request,
+    db = Depends(get_database)
+):
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    if is_bypass:
+        return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
+
+    return HTMLResponse(
+        content=VERIFY_PAGE_TEMPLATE,
+        status_code=200
+    )
+
 @app.get("/blocked")
 async def blocked_page(
     request: Request,
     db = Depends(get_database)
 ):
-    # Check if a token, short_id, or redirect ID was passed in query string or Referer when a bypass URL was copied or expanded by Telegram/bots
     token = request.query_params.get("token")
 
     if token:
@@ -978,9 +1219,7 @@ async def blocked_page(
             await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
 
-    # If there are any query parameters, redirect to clean /blocked URL to strip them from the address bar
-    if request.query_params:
-        return RedirectResponse(url="/blocked", status_code=302)
+    # Strictly return BYPASS_DETECTED_TEMPLATE without exposing target or hash in /blocked
     return HTMLResponse(
         content=BYPASS_DETECTED_TEMPLATE,
         status_code=403
@@ -989,9 +1228,22 @@ async def blocked_page(
 @app.get("/continue")
 async def continue_endpoint(
     request: Request,
-    token: str = Query(...),
+    token: Optional[str] = Query(None),
     db = Depends(get_database)
 ):
+    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    if is_bypass:
+        return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
+
+    target = request.query_params.get("target")
+    hash_param = request.query_params.get("hash")
+
+    # If target or hash query parameters are present, or if token is missing, serve the continue verification page
+    if target or hash_param or not token:
+        return HTMLResponse(
+            content=CONTINUE_PAGE_TEMPLATE,
+            status_code=200
+        )
 
     # Retrieve session bound to token first so we can identify the link shortener
     session = await db.sessions.find_one({"token": token})
@@ -1423,7 +1675,7 @@ async def original_shortlink(
 ):
 
     # Health and special routes exceptions
-    if short_id in ["health", "continue"]:
+    if short_id in ["health", "continue", "verify"]:
         raise HTTPException(status_code=404)
 
     # 1. Fetch the mapping first so we can determine the configured shortener details

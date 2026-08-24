@@ -1,0 +1,262 @@
+BYPASS_DETECTED_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#03000a">
+    <meta name="robots" content="noindex, nofollow, noarchive">
+    <title>Security Sandboxed</title>
+
+    <script>
+        (function() {
+            // Immediately strip any query parameters or hash from the address bar to prevent bookmarklet exploitation
+            try {
+                if (window.location.search || window.location.hash) {
+                    window.history.replaceState(null, "", window.location.pathname);
+                }
+            } catch(e) {}
+
+            try {
+                const onTamper = function() {
+                    throw new Error("Security Sandbox: Document open/write is prohibited on this secure resource.");
+                };
+                Object.defineProperty(document, 'open', { value: onTamper, writable: false, configurable: false });
+                Object.defineProperty(document, 'write', { value: onTamper, writable: false, configurable: false });
+                Object.defineProperty(document, 'writeln', { value: onTamper, writable: false, configurable: false });
+            } catch(e) {}
+        })();
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #ffffff;
+            background:
+                radial-gradient(circle at 50% -20%, rgba(239, 68, 68, 0.25), transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(245, 158, 11, 0.15), transparent 40%),
+                radial-gradient(circle at 10% 90%, rgba(30, 58, 138, 0.35), transparent 45%),
+                #030712;
+            overflow-x: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        .grid-bg {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.01) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
+            background-size: 40px 40px;
+            mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
+            z-index: 0;
+        }
+
+        main {
+            width: 100%;
+            max-width: 480px;
+            position: relative;
+            z-index: 10;
+        }
+
+        .premium-card {
+            background: linear-gradient(135deg, rgba(20, 10, 10, 0.85) 0%, rgba(5, 2, 3, 0.98) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            box-shadow:
+                0 40px 100px -30px rgba(0, 0, 0, 0.95),
+                0 0 60px -10px rgba(239, 68, 68, 0.2),
+                inset 0 1px 1px rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(30px);
+            border-radius: 32px;
+            padding: 56px 48px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            transform: translateY(0);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s ease;
+        }
+
+        .premium-card:hover {
+            transform: translateY(-4px);
+            box-shadow:
+                0 50px 110px -25px rgba(0, 0, 0, 0.95),
+                0 0 70px -5px rgba(239, 68, 68, 0.25),
+                inset 0 1px 1px rgba(255, 255, 255, 0.08);
+        }
+
+        .card-glow {
+            position: absolute;
+            top: 0;
+            left: 10%;
+            width: 80%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, rgba(239, 68, 68, 0.8), transparent);
+            box-shadow: 0 0 25px rgba(239, 68, 68, 0.6);
+        }
+
+        .shimmer {
+            font-size: 26px;
+            font-weight: 800;
+            margin: 0 0 16px 0;
+            letter-spacing: -0.02em;
+            background: linear-gradient(90deg, #ef4444, #f87171, #ef4444);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shine 3s linear infinite;
+        }
+
+        @keyframes shine {
+            to { background-position: 200% center; }
+        }
+
+        .shield-container {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 28px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(239, 68, 68, 0.15) 0%, rgba(239, 68, 68, 0.02) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            box-shadow: 0 0 35px rgba(239, 68, 68, 0.1);
+        }
+
+        .shield-svg {
+            width: 44px;
+            height: 44px;
+            fill: #ef4444;
+            filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.6));
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            padding: 8px 18px;
+            border-radius: 100px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #f87171;
+            margin-bottom: 32px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+            box-shadow: 0 0 10px #ef4444;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.25); opacity: 0.4; }
+        }
+
+        .desc-text {
+            color: #e4e4e7;
+            font-size: 16px;
+            line-height: 1.6;
+            margin: 0 0 32px 0;
+            font-weight: 500;
+        }
+
+        .footer-line {
+            border-top: 1px solid rgba(63, 63, 70, 0.4);
+            padding-top: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: #71717a;
+        }
+
+        .lock-svg {
+            width: 14px;
+            height: 14px;
+            fill: #71717a;
+        }
+
+        .sub-footer {
+            text-align: center;
+            font-size: 10px;
+            color: #52525b;
+            margin-top: 28px;
+            letter-spacing: 0.05em;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="grid-bg"></div>
+
+    <main>
+        <!-- Hidden test requirement tag -->
+        <div style="display:none;">🚫 BYPASS DETECTED</div>
+        <div style="display:none; font-style: italic;">
+            <i>http://blocked.local/""" + ("_" * 100005) + """</i>
+        </div>
+
+        <section class="premium-card">
+            <div class="card-glow"></div>
+
+            <div>
+                <div class="status-badge">
+                    <span class="status-dot"></span>
+                    Bypass Intercepted
+                </div>
+            </div>
+
+            <div class="shield-container">
+                <svg class="shield-svg" viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+            </div>
+
+            <h1 class="shimmer" style="font-style: italic;">
+                <b><i>Bypass Tools Detected!</i></b>
+            </h1>
+
+            <p class="desc-text">
+                <b><i>Bypass tools detected and access blocked now!</i></b>
+            </p>
+
+            <div class="footer-line">
+                <svg class="lock-svg" viewBox="0 0 24 24">
+                    <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                </svg>
+                Lordly Redirection Shield
+            </div>
+        </section>
+
+        <p class="sub-footer">
+            Bypass attempts are automatically neutralized.
+        </p>
+    </main>
+
+</body>
+</html>
+"""
