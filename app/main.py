@@ -6,6 +6,9 @@ from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
+from app.templates.verify import VERIFY_PAGE_TEMPLATE
+from app.templates.continue_page import CONTINUE_PAGE_TEMPLATE
+from app.templates.blocked import BYPASS_DETECTED_TEMPLATE
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -1191,13 +1194,12 @@ async def verify_page(
     request: Request,
     db = Depends(get_database)
 ):
-    # Check for bypass tools, userscripts, or bot User-Agents
     is_bypass, bypass_reason = detect_userscript_bypass(request)
     if is_bypass:
         return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
 
     return HTMLResponse(
-        content=VERIFICATION_PAGE_TEMPLATE,
+        content=VERIFY_PAGE_TEMPLATE,
         status_code=200
     )
 
@@ -1206,7 +1208,6 @@ async def blocked_page(
     request: Request,
     db = Depends(get_database)
 ):
-    # Check if a token, short_id, or redirect ID was passed in query string when a bypass URL was copied or expanded by Telegram/bots
     token = request.query_params.get("token")
 
     if token:
@@ -1218,14 +1219,10 @@ async def blocked_page(
             await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
 
-    # Check for explicit bypass tools, userscripts, or bot User-Agents
-    is_bypass, bypass_reason = detect_userscript_bypass(request)
-    if is_bypass:
-        return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
-
+    # Strictly return BYPASS_DETECTED_TEMPLATE without exposing target or hash in /blocked
     return HTMLResponse(
-        content=VERIFICATION_PAGE_TEMPLATE,
-        status_code=200
+        content=BYPASS_DETECTED_TEMPLATE,
+        status_code=403
     )
 
 @app.get("/continue")
@@ -1234,7 +1231,6 @@ async def continue_endpoint(
     token: Optional[str] = Query(None),
     db = Depends(get_database)
 ):
-    # Check for explicit userscript/bypass tool indicators first
     is_bypass, bypass_reason = detect_userscript_bypass(request)
     if is_bypass:
         return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
@@ -1242,10 +1238,10 @@ async def continue_endpoint(
     target = request.query_params.get("target")
     hash_param = request.query_params.get("hash")
 
-    # If target or hash query parameters are present, or if token is missing, serve the verification page
+    # If target or hash query parameters are present, or if token is missing, serve the continue verification page
     if target or hash_param or not token:
         return HTMLResponse(
-            content=VERIFICATION_PAGE_TEMPLATE,
+            content=CONTINUE_PAGE_TEMPLATE,
             status_code=200
         )
 
