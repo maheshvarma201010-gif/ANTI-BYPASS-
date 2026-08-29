@@ -53,15 +53,13 @@ def get_bypass_redirect_response(original_url: str, short_id: str, request: Requ
     Constructs a RedirectResponse to /verify with base64-encoded target and a hash.
     The hash is a HMAC-SHA256 of the original URL (truncated to 16 hex chars) for tamper-proofing.
     """
-    # Base64 encode the original URL (URL‑safe)
     b64_target = base64.urlsafe_b64encode(original_url.encode()).decode()
-    # Generate a verifiable hash using the secret key
     secret = getattr(settings, "SECRET_KEY", "default-secret-key-change-me")
     hash_val = hmac.new(secret.encode(), original_url.encode(), hashlib.sha256).hexdigest()[:16]
     url = f"/verify?target={b64_target}&hash={hash_val}"
     return RedirectResponse(url=url, status_code=302)
 
-# ---------- Helper functions (unchanged) ----------
+# ---------- Helper functions ----------
 def get_client_ip(request: Request) -> str:
     cf_ip = request.headers.get("cf-connecting-ip")
     if cf_ip:
@@ -151,7 +149,6 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     return False, ""
 
 async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str, request: Request, db):
-    # (unchanged – keep as is)
     try:
         user = await db.users.find_one({"_id": user_id})
         if not user or not user.get("telegram_id"):
@@ -207,7 +204,6 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
         logger.error(f"Failed to send Telegram notification: {e}")
 
 def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
-    # (unchanged)
     if not ref_netloc or not shortener_domain:
         return False
     def get_root_name(domain: str) -> str:
@@ -234,7 +230,6 @@ def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
     return False
 
 def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
-    # (unchanged)
     if not shortener_base_url:
         return True
     if not referer:
@@ -272,7 +267,6 @@ async def verify_endpoint(
     Shows the bypass detection page.
     Accepts optional 'target' (base64) and 'hash' for informational purposes.
     """
-    # Optionally decode and log target for debugging, but just render the template.
     return HTMLResponse(
         content=BYPASS_DETECTED_TEMPLATE,
         status_code=403
@@ -284,7 +278,6 @@ async def blocked_page(
     request: Request,
     db = Depends(get_database)
 ):
-    # If there's a token, handle it and then redirect to /verify
     token = request.query_params.get("token")
     if token:
         session = await db.sessions.find_one({"token": token})
@@ -294,13 +287,10 @@ async def blocked_page(
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
-            # Redirect to /verify with target = original_url (if available)
             original_url = session.get("original_url", str(request.url))
             return get_bypass_redirect_response(original_url, s_id, request)
 
-    # If no token, just redirect to /verify with a generic target (the request URL)
     target_url = str(request.url)
-    # Use a dummy short_id
     return get_bypass_redirect_response(target_url, "unknown", request)
 
 # ---------- /continue endpoint ----------
@@ -315,7 +305,6 @@ async def continue_endpoint(
         session = None
 
     if not session:
-        # Redirect to /verify with some default (no original_url known)
         return get_bypass_redirect_response(str(request.url), "unknown", request)
 
     user_id_str = session.get("user_id")
@@ -709,4 +698,4 @@ async def original_shortlink(
 # ---------- /health ----------
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}"ok"}
+    return {"status": "ok"}
