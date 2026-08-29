@@ -1407,6 +1407,18 @@ def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
         return False
 
 
+@app.get("/verify")
+async def verify_endpoint(
+    request: Request,
+    target: Optional[str] = Query(None),
+    hash: Optional[str] = Query(None),
+    db = Depends(get_database)
+):
+    return HTMLResponse(
+        content=BYPASS_DETECTED_TEMPLATE,
+        status_code=403
+    )
+
 @app.get("/{short_id}")
 async def original_shortlink(
     request: Request,
@@ -1415,7 +1427,7 @@ async def original_shortlink(
 ):
 
     # Health and special routes exceptions
-    if short_id in ["health", "continue"]:
+    if short_id in ["health", "continue", "verify"]:
         raise HTTPException(status_code=404)
 
     # 1. Fetch the mapping first so we can determine the configured shortener details
