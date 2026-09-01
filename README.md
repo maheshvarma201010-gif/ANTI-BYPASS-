@@ -21,7 +21,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 When deploying this project to **Vercel**, use the following configuration settings:
 
 - **Framework Preset**: Other
-- **Install Command**: `pip install -r requirements.txt`
+- **Install Command**: `pip install -r requirements.txt --break-system-packages`
 - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
 - **Output Directory**: `.`
 

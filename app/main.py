@@ -36,7 +36,7 @@ def get_bypass_url(target_url: Optional[str] = None, base_url: Optional[str] = N
         return DEFAULT_BYPASS_URL
     try:
         target_b64 = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
-        hash_val = hashlib.sha256(target_url.encode("utf-8")).hexdigest()[:16]
+        hash_val = hashlib.md5(target_url.encode("utf-8")).hexdigest()[:16]
         prefix = f"{b_url}" if b_url else "https://empty-workers-playground.rolexoriginalstg.workers.dev"
         return f"{prefix}/verify?target={target_b64}&hash={hash_val}"
     except Exception:
