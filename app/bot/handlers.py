@@ -30,9 +30,10 @@ async def get_active_banner_images() -> list[str]:
     db = get_database()
     images = []
     try:
-        cfg = await db.settings.find_one({"key": "banner_images"})
-        if cfg and isinstance(cfg.get("urls"), list) and len(cfg["urls"]) > 0:
-            images = [u for u in cfg["urls"] if u and isinstance(u, str) and u.startswith("http")]
+        if db is not None:
+            cfg = await db.settings.find_one({"key": "banner_images"})
+            if cfg and isinstance(cfg.get("urls"), list) and len(cfg["urls"]) > 0:
+                images = [u for u in cfg["urls"] if u and isinstance(u, str) and u.startswith("http")]
     except Exception as e:
         logger.warning(f"Error reading banner images from db: {e}")
 
@@ -110,6 +111,7 @@ class ConnectStates(StatesGroup):
     waiting_for_manual_end_time = State()
     waiting_for_admin_images = State()
     waiting_for_bypass_url = State()
+    waiting_for_allowed_domain = State()
 
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -121,7 +123,7 @@ def get_start_keyboard():
     ])
 
 async def get_connect_keyboard(telegram_id: str, db):
-    user = await db.users.find_one({"telegram_id": telegram_id})
+    user = await db.users.find_one({"telegram_id": telegram_id}) if db is not None else None
     buttons = []
     if user:
         for s in user.get("shorteners", []):
@@ -158,6 +160,7 @@ async def cmd_help(message: types.Message):
         "• <code>/connect</code> - Connect, view, or configure shorteners.\n"
         "• <code>/api</code> - View all generated Anti-Bypass (ABP) API keys.\n"
         "• <code>/stats</code> - Monitor real-time traffic & blocked bypass metrics.\n"
+        "• <code>/add</code> - Manage allowed referer domains (Admin).\n"
         "• <code>/panel</code> - Admin Panel (Banner Images & Configuration).\n"
         "• <code>/redirecttobp</code> - Set custom bypass-detected redirect URL (Admin).\n"
         "• <code>/help</code> - Show this detailed help manual.\n"
@@ -189,8 +192,8 @@ async def cb_back_to_main(callback: types.CallbackQuery):
 async def cb_connect_button(callback: types.CallbackQuery, state: FSMContext):
     db = get_database()
     telegram_id = str(callback.from_user.id)
-    user = await db.users.find_one({"telegram_id": telegram_id})
-    if not user:
+    user = await db.users.find_one({"telegram_id": telegram_id}) if db is not None else None
+    if not user and db is not None:
         new_user = {
             "telegram_id": telegram_id,
             "username": callback.from_user.username,
@@ -267,7 +270,7 @@ async def cb_mode_normal(callback: types.CallbackQuery):
     name = callback.data.split(":", 1)[1]
     db = get_database()
     telegram_id = str(callback.from_user.id)
-    user = await db.users.find_one({"telegram_id": telegram_id})
+    user = await db.users.find_one({"telegram_id": telegram_id}) if db is not None else None
     if not user:
         await send_bot_msg(callback, "<b>❌ User profile not found.</b>")
         await safe_callback_answer(callback)
@@ -359,7 +362,7 @@ async def process_manual_end_time(message: types.Message, state: FSMContext):
 
     db = get_database()
     telegram_id = str(message.from_user.id)
-    user = await db.users.find_one({"telegram_id": telegram_id})
+    user = await db.users.find_one({"telegram_id": telegram_id}) if db is not None else None
     if not user:
         await send_bot_msg(message, "<b>❌ User profile not found.</b>")
         await state.clear()
@@ -404,10 +407,11 @@ async def cb_delete_shortener(callback: types.CallbackQuery):
     db = get_database()
     telegram_id = str(callback.from_user.id)
 
-    await db.users.update_one(
-        {"telegram_id": telegram_id},
-        {"$pull": {"shorteners": {"name": name}}}
-    )
+    if db is not None:
+        await db.users.update_one(
+            {"telegram_id": telegram_id},
+            {"$pull": {"shorteners": {"name": name}}}
+        )
     await send_bot_msg(
         callback,
         f"<b>✅ Shortener Deleted</b>\n\n<blockquote>Shortener <code>{name}</code> has been removed from your account.</blockquote>",
@@ -430,7 +434,8 @@ async def cb_back_to_connect(callback: types.CallbackQuery):
 async def cb_delete_account(callback: types.CallbackQuery):
     db = get_database()
     telegram_id = str(callback.from_user.id)
-    await db.users.delete_one({"telegram_id": telegram_id})
+    if db is not None:
+        await db.users.delete_one({"telegram_id": telegram_id})
     await send_bot_msg(
         callback,
         "<b>✅ Account Deleted</b>\n\n<blockquote>Your account and connected shorteners have been permanently removed.</blockquote>"
@@ -441,8 +446,8 @@ async def cb_delete_account(callback: types.CallbackQuery):
 async def cmd_connect(message: types.Message):
     db = get_database()
     telegram_id = str(message.from_user.id)
-    user = await db.users.find_one({"telegram_id": telegram_id})
-    if not user:
+    user = await db.users.find_one({"telegram_id": telegram_id}) if db is not None else None
+    if not user and db is not None:
         new_user = {
             "telegram_id": telegram_id,
             "username": message.from_user.username,
@@ -488,7 +493,7 @@ async def process_api_key(message: types.Message, state: FSMContext):
 
     db = get_database()
     telegram_id = str(message.from_user.id)
-    user_data = await db.users.find_one({"telegram_id": telegram_id})
+    user_data = await db.users.find_one({"telegram_id": telegram_id}) if db is not None else None
 
     if user_data:
         for s in user_data.get("shorteners", []):
@@ -531,25 +536,26 @@ async def process_api_key(message: types.Message, state: FSMContext):
         "abp_key": new_abp_key
     }
 
-    if user_data:
-        await db.users.update_one(
-            {"telegram_id": telegram_id},
-            {"$push": {"shorteners": new_shortener}}
-        )
-    else:
-        new_user = {
-            "telegram_id": telegram_id,
-            "username": message.from_user.username,
-            "api_key": generate_api_key(),
-            "shorteners": [new_shortener],
-            "created_at": datetime.utcnow(),
-            "is_active": True,
-            "total_requests": 0,
-            "success_count": 0,
-            "blocked_count": 0,
-            "referer_failures": 0
-        }
-        await db.users.insert_one(new_user)
+    if db is not None:
+        if user_data:
+            await db.users.update_one(
+                {"telegram_id": telegram_id},
+                {"$push": {"shorteners": new_shortener}}
+            )
+        else:
+            new_user = {
+                "telegram_id": telegram_id,
+                "username": message.from_user.username,
+                "api_key": generate_api_key(),
+                "shorteners": [new_shortener],
+                "created_at": datetime.utcnow(),
+                "is_active": True,
+                "total_requests": 0,
+                "success_count": 0,
+                "blocked_count": 0,
+                "referer_failures": 0
+            }
+            await db.users.insert_one(new_user)
 
     await state.clear()
     base_app_url = settings.BASE_URL if settings.BASE_URL else "https://antibypass.koyeb.app"
@@ -573,7 +579,7 @@ async def cmd_api(message: types.Message):
 async def cb_view_api_keys(target: types.Message | types.CallbackQuery):
     user_id = str(target.from_user.id)
     db = get_database()
-    user = await db.users.find_one({"telegram_id": user_id})
+    user = await db.users.find_one({"telegram_id": user_id}) if db is not None else None
     if not user:
         await send_bot_msg(target, "<b>❌ Profile not found. Use /connect first.</b>", reply_markup=get_start_keyboard())
         return
@@ -617,7 +623,7 @@ async def cmd_stats(message: types.Message):
 async def cb_view_stats(target: types.Message | types.CallbackQuery):
     user_id = str(target.from_user.id)
     db = get_database()
-    user = await db.users.find_one({"telegram_id": user_id})
+    user = await db.users.find_one({"telegram_id": user_id}) if db is not None else None
     if not user:
         await send_bot_msg(target, "<b>❌ User profile not found.</b>", reply_markup=get_start_keyboard())
         return
@@ -637,17 +643,142 @@ async def cb_view_stats(target: types.Message | types.CallbackQuery):
 async def cmd_delete(message: types.Message):
     db = get_database()
     telegram_id = str(message.from_user.id)
-    await db.users.delete_one({"telegram_id": telegram_id})
+    if db is not None:
+        await db.users.delete_one({"telegram_id": telegram_id})
     await send_bot_msg(message, "<b>✅ Account deleted successfully.</b>", reply_markup=get_start_keyboard())
 
-# ================= ADMIN PANEL HANDLERS =================
+# ================= ADMIN ALLOWED DOMAINS HANDLERS (/add) =================
 def is_admin(user_id: int | str) -> bool:
     admin_list = settings.get_admin_ids()
     if not admin_list:
-        # If ADMIN_IDS is not configured in env/config, permit access so first setup works
         return True
     user_str = str(user_id).strip()
     return any(user_str == a.strip() for a in admin_list)
+
+def get_allowed_domains_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="➕ Add Allowed Domain", callback_data="add_allowed_domain"),
+            InlineKeyboardButton(text="📋 View Allowed Domains", callback_data="view_allowed_domains")
+        ]
+    ])
+
+@router.message(Command("add"))
+async def cmd_add_domain(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await send_bot_msg(
+            message,
+            "<b>🚫 Access Denied</b>\n\n<blockquote>You do not have administrative privileges to manage allowed domains.</blockquote>"
+        )
+        return
+
+    text = (
+        "<b>🌐 Allowed Domains Manager</b>\n\n"
+        "<blockquote>Manage referer domains allowed for bypass validation.\n"
+        "Admins can add or delete an unlimited number of allowed domains.</blockquote>"
+    )
+    await send_bot_msg(message, text, reply_markup=get_allowed_domains_keyboard())
+
+@router.callback_query(F.data == "add_allowed_domain")
+async def cb_add_allowed_domain(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await safe_callback_answer(callback, "Unauthorized", show_alert=True)
+        return
+
+    await state.set_state(ConnectStates.waiting_for_allowed_domain)
+    await send_bot_msg(
+        callback,
+        "<b>➕ Add Allowed Referer Domain</b>\n\n"
+        "<blockquote>Please send the domain name to add to the allowed referers list.\n"
+        "<b>Examples:</b> <code>example.com</code>, <code>telegram.me</code>, or <code>https://my-domain.com</code></blockquote>"
+    )
+    await safe_callback_answer(callback)
+
+@router.message(ConnectStates.waiting_for_allowed_domain)
+async def process_allowed_domain(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+
+    raw_input = message.text.strip()
+    parsed = urlparse(raw_input if "://" in raw_input else f"http://{raw_input}")
+    domain = (parsed.netloc or parsed.path).strip().lower()
+
+    if not domain or "." not in domain:
+        await send_bot_msg(
+            message,
+            "<b>❌ Invalid Domain Name</b>\n\n<blockquote>Please enter a valid domain name (e.g. <code>example.com</code>).</blockquote>"
+        )
+        return
+
+    db = get_database()
+    if db is not None:
+        await db.allowed_referers.update_one(
+            {"domain": domain},
+            {"$set": {"domain": domain, "added_by": str(message.from_user.id), "created_at": datetime.utcnow()}},
+            upsert=True
+        )
+
+    await state.clear()
+    await send_bot_msg(
+        message,
+        f"<b>✅ Domain Allowed Successfully!</b>\n\n"
+        f"<blockquote>Domain <code>{domain}</code> has been added to the allowed referers list with strict validation.</blockquote>",
+        reply_markup=get_allowed_domains_keyboard()
+    )
+
+@router.callback_query(F.data == "view_allowed_domains")
+async def cb_view_allowed_domains(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await safe_callback_answer(callback, "Unauthorized", show_alert=True)
+        return
+
+    db = get_database()
+    domains = []
+    if db is not None:
+        cursor = db.allowed_referers.find({})
+        domains = [doc.get("domain") async for doc in cursor if doc.get("domain")]
+
+    if not domains:
+        await send_bot_msg(
+            callback,
+            "<b>📋 Allowed Domains List</b>\n\n<blockquote>No custom allowed domains configured yet.</blockquote>",
+            reply_markup=get_allowed_domains_keyboard()
+        )
+        await safe_callback_answer(callback)
+        return
+
+    text = f"<b>📋 Configured Allowed Domains ({len(domains)} total):</b>\n\n"
+    buttons = []
+    for d in domains[:30]:
+        text += f"• <code>{d}</code>\n"
+        buttons.append([InlineKeyboardButton(text=f"🗑️ Delete {d}", callback_data=f"del_domain:{d}")])
+
+    buttons.append([InlineKeyboardButton(text="➕ Add New Domain", callback_data="add_allowed_domain")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await send_bot_msg(callback, text, reply_markup=keyboard)
+    await safe_callback_answer(callback)
+
+@router.callback_query(F.data.startswith("del_domain:"))
+async def cb_delete_allowed_domain(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await safe_callback_answer(callback, "Unauthorized", show_alert=True)
+        return
+
+    domain = callback.data.split(":", 1)[1]
+    db = get_database()
+    if db is not None:
+        await db.allowed_referers.delete_one({"domain": domain})
+
+    await send_bot_msg(
+        callback,
+        f"<b>✅ Domain Deleted</b>\n\n<blockquote>Domain <code>{domain}</code> has been removed from allowed referers.</blockquote>",
+        reply_markup=get_allowed_domains_keyboard()
+    )
+    await safe_callback_answer(callback)
+
+# ================= ADMIN PANEL HANDLERS =================
 
 def get_panel_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -738,7 +869,7 @@ async def process_admin_images(message: types.Message, state: FSMContext):
         return
 
     db = get_database()
-    existing_cfg = await db.settings.find_one({"key": "banner_images"})
+    existing_cfg = await db.settings.find_one({"key": "banner_images"}) if db is not None else None
     current_urls = existing_cfg.get("urls", []) if existing_cfg else []
 
     # Merge while removing duplicates
@@ -750,11 +881,12 @@ async def process_admin_images(message: types.Message, state: FSMContext):
             current_urls.append(u)
             new_added += 1
 
-    await db.settings.update_one(
-        {"key": "banner_images"},
-        {"$set": {"urls": current_urls, "updated_at": datetime.utcnow()}},
-        upsert=True
-    )
+    if db is not None:
+        await db.settings.update_one(
+            {"key": "banner_images"},
+            {"$set": {"urls": current_urls, "updated_at": datetime.utcnow()}},
+            upsert=True
+        )
 
     await state.clear()
     await send_bot_msg(
@@ -772,7 +904,8 @@ async def cb_panel_clear_images(callback: types.CallbackQuery):
         return
 
     db = get_database()
-    await db.settings.delete_one({"key": "banner_images"})
+    if db is not None:
+        await db.settings.delete_one({"key": "banner_images"})
     await send_bot_msg(
         callback,
         "<b>🗑️ Banner Images Cleared!</b>\n\n<blockquote>All banner images have been removed. Bot will send messages in text-only mode.</blockquote>",
@@ -790,7 +923,7 @@ async def cmd_redirecttobp(message: types.Message, state: FSMContext):
         return
 
     db = get_database()
-    current_cfg = await db.settings.find_one({"key": "bypass_redirect_url"})
+    current_cfg = await db.settings.find_one({"key": "bypass_redirect_url"}) if db is not None else None
     current_url = current_cfg.get("url") if current_cfg else "Default (https://empty-workers-playground.rolexoriginalstg.workers.dev/verify)"
 
     await state.set_state(ConnectStates.waiting_for_bypass_url)
@@ -818,11 +951,12 @@ async def process_bypass_url(message: types.Message, state: FSMContext):
     clean_url = raw_url
 
     db = get_database()
-    await db.settings.update_one(
-        {"key": "bypass_redirect_url"},
-        {"$set": {"url": clean_url, "updated_at": datetime.utcnow()}},
-        upsert=True
-    )
+    if db is not None:
+        await db.settings.update_one(
+            {"key": "bypass_redirect_url"},
+            {"$set": {"url": clean_url, "updated_at": datetime.utcnow()}},
+            upsert=True
+        )
 
     await state.clear()
     await send_bot_msg(
