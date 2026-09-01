@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="origin">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Verifying...</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #f7fafc;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+            padding: 48px;
+            max-width: 540px;
+            width: 100%;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid #e2e8f0;
+            border-top-color: #4299e1;
+            border-radius: 50%;
+            animation: spin 0.8s cubic-bezier(0.6, 0, 0.4, 1) infinite;
+            margin: 0 auto 24px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        h1 {
+            font-size: 22px;
+            color: #2d3748;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .subtitle {
+            color: #718096;
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+        .progress-container {
+            width: 100%;
+            height: 6px;
+            background: #edf2f7;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4299e1, #48bb78);
+            width: 0%;
+            transition: width 0.5s ease;
+            border-radius: 3px;
+        }
+        .status-text {
+            font-size: 14px;
+            color: #a0aec0;
+            margin-top: 8px;
+        }
+        .error-icon { font-size: 56px; margin-bottom: 16px; display: block; }
+        .success-icon { font-size: 56px; margin-bottom: 16px; display: block; }
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 16px;
+        }
+        .btn {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-primary {
+            background: #4299e1;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #3182ce;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(66, 153, 225, 0.3);
+        }
+        .btn-secondary {
+            background: #edf2f7;
+            color: #2d3748;
+        }
+        .btn-secondary:hover {
+            background: #e2e8f0;
+        }
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+        .btn-success:hover {
+            background: #38a169;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(72, 187, 120, 0.3);
+        }
+        .message-box {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            text-align: left;
+        }
+        .message-box ul {
+            padding-left: 20px;
+            margin: 8px 0;
+        }
+        .message-box li {
+            margin: 4px 0;
+            color: #4a5568;
+            font-size: 14px;
+        }
+        .hidden { display: none; }
+        .fade-in {
+            animation: fadeIn 0.5s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="app">
+        <div id="loading-state">
+            <div class="spinner"></div>
+            <h1>Verifying Your Request</h1>
+            <p class="subtitle">Please wait while we confirm your browser environment</p>
+            <div class="progress-container">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p class="status-text" id="statusText">Attempt 1 of 3</p>
+        </div>
+    </div>
+
+    <script>
+        const MAX_RETRIES = 3;
+        let retryCount = 0;
+        let verificationAttempts = 0;
+        const app = document.getElementById('app');
+        const progressFill = document.getElementById('progressFill');
+
+        function updateProgress(attempt) {
+            const percentage = Math.min((attempt / MAX_RETRIES) * 100, 100);
+            progressFill.style.width = percentage + '%';
+            document.getElementById('statusText').textContent = `Attempt ${attempt + 1} of ${MAX_RETRIES}`;
+        }
+
+        function getClientFingerprint() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.textBaseline = 'top';
+            ctx.font = '14px Arial';
+            ctx.fillStyle = '#f60';
+            ctx.fillRect(100, 100, 50, 50);
+            ctx.fillStyle = '#069';
+            ctx.fillText('Cwm fjordbank glyphs vext quiz, 😃', 2, 15);
+            const canvasFingerprint = canvas.toDataURL();
+
+            return {
+                canvas: canvasFingerprint,
+                screenResolution: `${window.screen.width}x${window.screen.height}`,
+                screenColorDepth: window.screen.colorDepth,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                language: navigator.language,
+                platform: navigator.platform,
+                hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
+                deviceMemory: navigator.deviceMemory || 'unknown'
+            };
+        }
+
+        async function performVerification(retryAttempt = 0) {
+            verificationAttempts++;
+            updateProgress(verificationAttempts - 1);
+
+            const fingerprint = getClientFingerprint();
+
+            const payload = {
+                referrer: document.referrer || '',
+                userAgent: navigator.userAgent,
+                hostname: window.location.hostname,
+                timestamp: Math.floor(Date.now() / 1000),
+                token: "{token}",
+                retryCount: retryAttempt,
+                verificationId: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                fingerprint: fingerprint,
+                referrerPolicy: document.referrerPolicy || 'default',
+                connectionType: navigator.connection ? navigator.connection.effectiveType : 'unknown',
+                isSecure: window.isSecureContext || false
+            };
+
+            try {
+                const response = await fetch("/validate/{short_id}", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-Verification-ID": payload.verificationId
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (data.status === "success") {
+                    showSuccess(data);
+                    return;
+                }
+
+                if (data.status === "retry" && retryAttempt < MAX_RETRIES) {
+                    const delay = Math.min(Math.pow(2, retryAttempt) * 1000, 5000);
+                    document.getElementById('statusText').textContent = `Retrying in ${Math.round(delay/1000)}s...`;
+                    setTimeout(() => performVerification(retryAttempt + 1), delay);
+                    return;
+                }
+
+                if (data.status === "blocked") {
+                    showBlocked(data);
+                } else {
+                    showError(data);
+                }
+
+            } catch (error) {
+                if (retryAttempt < MAX_RETRIES) {
+                    setTimeout(() => performVerification(retryAttempt + 1), 1500);
+                } else {
+                    showNetworkError();
+                }
+            }
+        }
+
+        function showSuccess(data) {
+            app.innerHTML = `
+                <div class="fade-in">
+                    <span class="success-icon">✅</span>
+                    <h1>Verification Successful!</h1>
+                    <p class="subtitle">Redirecting you to your destination...</p>
+                    <div class="progress-container">
+                        <div class="progress-fill" style="width: 100%; background: #48bb78;"></div>
+                    </div>
+                    <button class="btn btn-success" onclick="window.location.href='${data.destination}'">
+                        Click here if not redirected
+                    </button>
+                </div>
+            `;
+
+            setTimeout(() => {
+                window.location.href = data.destination;
+            }, 1500);
+        }
+
+        function showBlocked(data) {
+            let html = `<div class="fade-in"><span class="error-icon">🔒</span><h1>Access Denied</h1>`;
+
+            if (data.reason === "Missing JavaScript Referer") {
+                html += `
+                    <p class="subtitle">We couldn't verify your browser's referer information.</p>
+                    <div class="message-box">
+                        <p><strong>Common causes:</strong></p>
+                        <ul>
+                            <li>🔒 Browser extensions blocking referer headers</li>
+                            <li>🛡️ Privacy settings (Safari, Firefox Enhanced Tracking)</li>
+                            <li>📋 Opening link in a new tab/window</li>
+                            <li>🔄 Using a bookmark or direct URL</li>
+                        </ul>
+                        <p style="margin-top: 8px;"><strong>Solutions:</strong></p>
+                        <ul>
+                            <li>✅ Click the original link directly</li>
+                            <li>✅ Disable privacy extensions temporarily</li>
+                            <li>✅ Try a different browser</li>
+                            <li>✅ Use Incognito/Private mode</li>
+                        </ul>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="location.reload()">🔄 Retry</button>
+                        <button class="btn btn-secondary" onclick="window.history.back()">← Go Back</button>
+                    </div>
+                `;
+            } else if (data.reason === "Invalid Token") {
+                html += `
+                    <p class="subtitle">Your verification token has expired.</p>
+                    <div class="message-box">
+                        <p>Tokens expire after 10 minutes for security.</p>
+                        <p>Please refresh the page to get a new token.</p>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="location.reload()">🔄 Refresh</button>
+                    </div>
+                `;
+            } else if (data.reason === "Invalid Referer") {
+                html += `
+                    <p class="subtitle">Invalid referer detected.</p>
+                    <div class="message-box">
+                        <p>You must access this link from the original source.</p>
+                        <p><strong>Please use the original short link provided.</strong></p>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" onclick="window.history.back()">← Go Back</button>
+                    </div>
+                `;
+            } else {
+                html += `
+                    <p class="subtitle">${data.message || "Access denied due to security policy."}</p>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="location.reload()">🔄 Try Again</button>
+                    </div>
+                `;
+            }
+
+            html += `</div>`;
+            app.innerHTML = html;
+        }
+
+        function showError(data) {
+            app.innerHTML = `
+                <div class="fade-in">
+                    <span class="error-icon">⚠️</span>
+                    <h1>Verification Error</h1>
+                    <p class="subtitle">${data.message || "An unexpected error occurred."}</p>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="location.reload()">🔄 Retry</button>
+                        <button class="btn btn-secondary" onclick="window.location.href='/'">🏠 Home</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function showNetworkError() {
+            app.innerHTML = `
+                <div class="fade-in">
+                    <span class="error-icon">🌐</span>
+                    <h1>Network Error</h1>
+                    <p class="subtitle">Unable to connect to the verification server.</p>
+                    <div class="message-box">
+                        <p>Please check:</p>
+                        <ul>
+                            <li>Your internet connection</li>
+                            <li>Firewall or VPN settings</li>
+                            <li>Ad blockers that might interfere</li>
+                        </ul>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="location.reload()">🔄 Retry</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Start verification with a small delay to ensure page is ready
+        setTimeout(() => performVerification(0), 300);
+    </script>
+</body>
+</html>
