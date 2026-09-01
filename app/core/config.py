@@ -1,8 +1,10 @@
 import os
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, List
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     PROJECT_NAME: str = "Anti-Bypass Protection"
     API_V1_STR: str = "/api"
     SECRET_KEY: str = "your-secret-key-here"  # Change in production
@@ -21,10 +23,6 @@ class Settings(BaseSettings):
     # Challenge settings
     CHALLENGE_EXPIRY_SECONDS: int = 60
     TOKEN_EXPIRY_SECONDS: int = 300
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
 
     def get_admin_ids(self) -> List[str]:
         raw = os.getenv("ADMIN_IDS", self.ADMIN_IDS)
