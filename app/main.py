@@ -18,6 +18,7 @@ from bson import ObjectId
 from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
+from app.core.referer import is_allowed_referer
 
 app = FastAPI(title=settings.PROJECT_NAME)
 app.include_router(api_router)
@@ -199,7 +200,22 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
     
     return False, ""
 
-def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
+async def check_request_allowed_domain(request: Request, db = None) -> bool:
+    """
+    Check if the Referer or Origin header matches an allowed domain.
+    """
+    referer = request.headers.get("referer", "")
+    origin = request.headers.get("origin", "")
+
+    if referer and await is_allowed_referer(referer, db):
+        return True
+
+    if origin and await is_allowed_referer(origin, db):
+        return True
+
+    return False
+
+async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, str]:
     raw_referer = request.headers.get("referer", "")
     referer_dec = unquote(unquote(raw_referer)).lower()
     
@@ -211,6 +227,10 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         "violentmonkey", "stealth final", "smart nicktrick", "ddxbypass", "bypassbot"
     ]
     
+    # If user request comes from an allowed domain (Referer or Origin), skip false-positive checks
+    if await check_request_allowed_domain(request, db):
+        return False, ""
+
     for kw in banned_keywords:
         if kw in referer_dec:
             return True, f"Banned userscript pattern '{kw}' detected in Referer"
@@ -314,7 +334,7 @@ async def verify_endpoint(
     if not is_valid or not target_url:
         return bypass_detected_response()
     
-    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    is_bypass, bypass_reason = await detect_userscript_bypass(request, db)
     if is_bypass:
         if db is not None:
             try:
@@ -472,7 +492,7 @@ async def continue_endpoint(
     user_id = ObjectId(user_id_str) if user_id_str else None
     short_id = session.get("short_id", "unknown")
     
-    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    is_bypass, bypass_reason = await detect_userscript_bypass(request, db)
     if is_bypass:
         if user_id:
             try:
