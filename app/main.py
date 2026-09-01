@@ -1,14 +1,19 @@
+import hmac
+import hashlib
+import base64
 from typing import Optional
 from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from app.api.endpoints import router as api_router
 from app.models.database import connect_to_mongo, close_mongo_connection, get_database
 from app.core.config import settings
 from app.core.referer import get_bridge_page_html, handle_validation
 
 app = FastAPI(title=settings.PROJECT_NAME)
-
 app.include_router(api_router)
+
+# Secret key for HMAC - should be in settings
+SECRET_KEY = settings.SECRET_KEY or "your-secret-key-change-in-production"
 
 @app.on_event("startup")
 async def startup_db_client():
@@ -22,13 +27,59 @@ import secrets
 import time
 import base64
 import hashlib
-from fastapi.responses import RedirectResponse
-from urllib.parse import urlparse
+import hmac
+from urllib.parse import urlparse, quote, unquote
 from app.core.referer import is_allowed_referer, is_related_domain, is_whitelisted_user, is_development_environment, get_user_verification_history, is_legitimate_no_referer
 from bson import ObjectId
 
 DEFAULT_BYPASS_BASE_URL = "https://empty-workers-playground.rolexoriginalstg.workers.dev/verify"
 DEFAULT_TARGET_URL = "https://fileditchfiles.st/balpha12/0ab8995da856ed47f7a8/Top.Telugu.Influencer.S01E09.Best.of.all.Part.1.720p.AHA.WEB-DL.Telugu.AAC.2.0.H.265-eMpTy.mkv"
+
+def generate_secure_hash(target_url: str, salt: Optional[str] = None) -> tuple[str, str]:
+    """
+    Generate HMAC-MD5 hash for the target URL with a salt
+    Returns: (hash, salt)
+    """
+    if not salt:
+        salt = secrets.token_urlsafe(8)
+    
+    # Create HMAC-MD5 hash
+    message = f"{target_url}:{salt}".encode('utf-8')
+    hash_obj = hmac.new(
+        SECRET_KEY.encode('utf-8'),
+        message,
+        hashlib.md5
+    )
+    hash_value = hash_obj.hexdigest()
+    return hash_value, salt
+
+def verify_secure_hash(target_url: str, hash_value: str, salt: str) -> bool:
+    """
+    Verify the HMAC-MD5 hash for the target URL
+    """
+    try:
+        expected_hash, _ = generate_secure_hash(target_url, salt)
+        return hmac.compare_digest(expected_hash, hash_value)
+    except Exception:
+        return False
+
+def create_secure_url(target_url: str, base_url: str = None) -> str:
+    """
+    Create a secure URL with target and hash parameters
+    """
+    if not base_url:
+        base_url = DEFAULT_BYPASS_BASE_URL
+    
+    base_url = base_url.split("?")[0].rstrip("/")
+    
+    # Generate hash with salt
+    hash_value, salt = generate_secure_hash(target_url)
+    
+    # Encode target URL safely
+    target_b64 = base64.urlsafe_b64encode(target_url.encode('utf-8')).decode('utf-8')
+    
+    # Build URL with target, hash, and salt
+    return f"{base_url}?target={target_b64}&hash={hash_value}&salt={salt}"
 
 async def get_bypass_url(target_url: Optional[str] = None, db = None) -> str:
     base_url = DEFAULT_BYPASS_BASE_URL
@@ -40,17 +91,23 @@ async def get_bypass_url(target_url: Optional[str] = None, db = None) -> str:
         except Exception:
             pass
 
-    base_url = base_url.split("?")[0].rstrip("/")
     effective_target = target_url or DEFAULT_TARGET_URL
+    return create_secure_url(effective_target, base_url)
 
+def decode_target(encoded_target: str) -> Optional[str]:
+    """
+    Decode base64url encoded target
+    """
     try:
-        target_b64 = base64.b64encode(effective_target.encode("utf-8")).decode("utf-8")
-        hash_val = hashlib.md5(effective_target.encode("utf-8")).hexdigest()[:16]
-        return f"{base_url}?target={target_b64}&hash={hash_val}"
+        # Add padding if necessary
+        padding = 4 - (len(encoded_target) % 4)
+        if padding != 4:
+            encoded_target += '=' * padding
+        
+        decoded = base64.urlsafe_b64decode(encoded_target).decode('utf-8')
+        return decoded
     except Exception:
-        target_b64 = base64.b64encode(DEFAULT_TARGET_URL.encode("utf-8")).decode("utf-8")
-        hash_val = hashlib.md5(DEFAULT_TARGET_URL.encode("utf-8")).hexdigest()[:16]
-        return f"{DEFAULT_BYPASS_BASE_URL}?target={target_b64}&hash={hash_val}"
+        return None
 
 BYPASS_DETECTED_TEMPLATE = """
 <!DOCTYPE html>
@@ -269,11 +326,7 @@ BYPASS_DETECTED_TEMPLATE = """
     <div class="grid-bg"></div>
 
     <main>
-        <!-- Hidden test requirement tag -->
         <div style="display:none;">🚫 BYPASS DETECTED</div>
-        <div style="display:none; font-style: italic;">
-            <i>https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target=aHR0cHM6Ly9maWxlZGl0Y2hmaWxlcy5zdC9iYWxwaGExMi8wYWI4OTk1ZGE4NTZlZDQ3ZjdhOC9Ub3AuVGVsdWd1LkluZmx1ZW5jZXIuUzAxRTA5LkJlc3Qub2YuYWxsLlBhcnQuMS43MjBwLkFIQS5XRUItREwuVGVsdWd1LkFBQy4yLjAuSC4yNjUtZU1wVHkubWt2&hash=497e48e0ffb37f64</i>
-        </div>
 
         <section class="premium-card">
             <div class="card-glow"></div>
@@ -989,7 +1042,7 @@ async def blocked_page(
     db = Depends(get_database)
 ):
     target_url = None
-    # Check if a token, short_id, or redirect ID was passed in query string or Referer when a bypass URL was copied or expanded by Telegram/bots
+    # Check if a token, short_id, or redirect ID was passed in query string or Referer
     token = request.query_params.get("token")
 
     if token:
@@ -1003,7 +1056,7 @@ async def blocked_page(
                 await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
                 await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
 
-    # Show bypass detected page instead of redirecting
+    # Show bypass detected page
     return bypass_detected_response()
 
 @app.get("/continue")
@@ -1013,14 +1066,12 @@ async def continue_endpoint(
     db = Depends(get_database)
 ):
 
-    # Retrieve session bound to token first so we can identify the link shortener
+    # Retrieve session bound to token first
     session = await db.sessions.find_one({"token": token})
 
-    # If it is a mock and not configured as a dictionary, treat it as None/not found
     if session is not None and not isinstance(session, dict):
         session = None
 
-    # Protection 1: Invalid/missing token
     if not session:
         return bypass_detected_response()
 
@@ -1037,7 +1088,6 @@ async def continue_endpoint(
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         return bypass_detected_response()
 
@@ -1045,29 +1095,26 @@ async def continue_endpoint(
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
 
-    # Protection 2: Expired verification sessions
-    # Tokens expire after 300 seconds for slow networks
+    # Protection: Expired verification sessions
     if time.time() - session["created_at"] > 300 or time.time() > session.get("expires_at", session["created_at"] + 300):
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
-        # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         return bypass_detected_response()
 
-    # Protection 3: Reusing an already completed/consumed verification session
+    # Protection: Reusing an already completed session
     if session.get("consumed", False) or session.get("status") in ["verified", "expired"]:
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Token already used", request, db)
         return bypass_detected_response()
 
-    # Protection 4: Session validation (either Cookie match OR fallback to IP+UA match if cookies blocked/incognito)
+    # Session validation
     cookie_valid = cookie_session_id and cookie_session_id == session["session_id"]
     fallback_valid = (not cookie_session_id) and (session["client_ip"] == client_ip) and (session["user_agent"] == user_agent)
 
     if not (cookie_valid or fallback_valid):
-        # Determine specific reason for clear security page details
         if cookie_session_id and cookie_session_id != session["session_id"]:
             reason = "Session mismatch"
         elif session["user_agent"] != user_agent:
@@ -1078,11 +1125,10 @@ async def continue_endpoint(
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, reason, request, db)
-        # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         return bypass_detected_response()
 
-    # Consume/invalidate token atomically server-side to prevent TOCTOU race conditions / parallel replay
+    # Consume token atomically
     result = await db.sessions.update_one(
         {"_id": session["_id"], "consumed": False},
         {"$set": {"consumed": True}}
@@ -1093,10 +1139,10 @@ async def continue_endpoint(
             await send_bypass_notification(user_id, short_id, "Token already used", request, db)
         return bypass_detected_response()
 
-    # Retrieve real/original destination URL
+    # Retrieve destination URL
     destination_url = session["original_url"]
 
-    # Determine if it's a browser requesting standard HTML page
+    # Check if browser request
     user_agent = request.headers.get("user-agent", "").lower()
     accept_header = request.headers.get("accept", "").lower()
     is_browser = "text/html" in accept_header and "test-agent" not in user_agent and "pytest" not in user_agent
@@ -1114,7 +1160,7 @@ async def continue_endpoint(
         session_hash_input = f"{client_ip}:{normalized_ua}:{salt}"
         session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()
 
-        # Store redirect mapping in redirects collection with 120s TTL
+        # Store redirect mapping
         await db.redirects.insert_one({
             "redirect_id": redirect_id,
             "target_url": destination_url,
@@ -1145,7 +1191,7 @@ async def continue_endpoint(
         )
         return HTMLResponse(content=html_content, status_code=200)
 
-    # Redirect to the final destination
+    # Redirect to final destination
     return RedirectResponse(url=destination_url, status_code=302)
 
 
@@ -1155,18 +1201,15 @@ async def redirect_endpoint(
     id: str = Query(...),
     db = Depends(get_database)
 ):
-    # Retrieve the redirect mapping
     redirect_doc = await db.redirects.find_one({"redirect_id": id})
     if not redirect_doc:
         return bypass_detected_response()
 
     target_url = redirect_doc.get("target_url")
 
-    # Replay/duplicate protection
     if redirect_doc.get("consumed", False) or redirect_doc.get("status") in ["verified", "expired"]:
         return bypass_detected_response()
 
-    # 120 seconds TTL check
     if time.time() - redirect_doc["created_at"] > 120 or time.time() > redirect_doc.get("expires_at", redirect_doc["created_at"] + 120):
         await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         return bypass_detected_response()
@@ -1182,13 +1225,13 @@ async def redirect_endpoint(
                 await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
                 return bypass_detected_response()
 
-    # Challenge Nonce validation if nonce parameter was provided
+    # Challenge Nonce validation
     expected_nonce = redirect_doc.get("nonce")
     nonce_param = request.query_params.get("nonce")
     if expected_nonce and nonce_param and expected_nonce != nonce_param:
         return bypass_detected_response()
 
-    # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
+    # SHA-256 session integrity check
     session_hash = redirect_doc.get("session_hash")
     salt = redirect_doc.get("salt")
     if session_hash and salt:
@@ -1212,7 +1255,7 @@ async def redirect_endpoint(
     if expected_tab_token and expected_tab_token != tab_param:
         return bypass_detected_response()
 
-    # Atomically mark the redirect ID as consumed and verified
+    # Atomically mark as consumed
     result = await db.redirects.update_one(
         {"_id": redirect_doc["_id"], "consumed": False},
         {"$set": {"consumed": True, "status": "verified"}}
@@ -1220,7 +1263,6 @@ async def redirect_endpoint(
     if result.modified_count == 0:
         return bypass_detected_response()
 
-    # Secure server-side HTTP 302 redirect
     return RedirectResponse(url=redirect_doc["target_url"], status_code=302)
 
 
@@ -1235,18 +1277,15 @@ async def report_violation_endpoint(
     if not redirect_id:
         raise HTTPException(status_code=400, detail="Missing redirect ID")
 
-    # 1. Retrieve the redirect mapping
     redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
     if not redirect_doc:
         return {"status": "error", "message": "Redirect not found"}
 
-    # 2. Instantly consume and expire the redirect mapping to prevent any future use
     await db.redirects.update_one(
         {"_id": redirect_doc["_id"]},
         {"$set": {"consumed": True}}
     )
 
-    # 3. Find and instantly invalidate/consume any associated session to block the user
     user_id_str = redirect_doc.get("user_id")
     short_id = redirect_doc.get("short_id", "unknown")
     session_id = redirect_doc.get("session_id")
@@ -1263,7 +1302,6 @@ async def report_violation_endpoint(
             if short_id == "unknown":
                 short_id = session_doc.get("short_id", "unknown")
 
-    # 4. Increment the user's blocked count and send the Telegram bot alert instantly
     if user_id_str:
         user_id = ObjectId(user_id_str)
         await db.users.update_one(
@@ -1271,7 +1309,6 @@ async def report_violation_endpoint(
             {"$inc": {"blocked_count": 1}}
         )
 
-        # Async send instant Telegram notification
         await send_bypass_notification(
             user_id,
             short_id,
@@ -1305,7 +1342,6 @@ async def redirect_post_endpoint(
         await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         raise HTTPException(status_code=410, detail="Redirect expired")
 
-    # MANUAL mode timer window validation
     if redirect_doc.get("mode") == "MANUAL":
         min_s = redirect_doc.get("manual_min_seconds")
         max_s = redirect_doc.get("manual_max_seconds")
@@ -1316,13 +1352,11 @@ async def redirect_post_endpoint(
                 await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
                 raise HTTPException(status_code=410, detail="Verification expired")
 
-    # Challenge Nonce validation if nonce parameter was provided
     expected_nonce = redirect_doc.get("nonce")
     nonce_param = body.get("nonce")
     if expected_nonce and nonce_param and expected_nonce != nonce_param:
         raise HTTPException(status_code=403, detail="Nonce verification failed")
 
-    # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
     session_hash = redirect_doc.get("session_hash")
     salt = redirect_doc.get("salt")
     if session_hash and salt:
@@ -1334,19 +1368,16 @@ async def redirect_post_endpoint(
         if session_hash != expected_hash:
             raise HTTPException(status_code=403, detail="Session verification failed")
 
-    # Same-session validation
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
     if expected_session_id and expected_session_id != cookie_session_id:
         raise HTTPException(status_code=403, detail="Session verification failed")
 
-    # Same-tab validation
     expected_tab_token = redirect_doc.get("tab_token")
     tab_param = body.get("tab")
     if expected_tab_token and expected_tab_token != tab_param:
         raise HTTPException(status_code=403, detail="Tab security violation")
 
-    # Atomically mark as consumed and verified
     result = await db.redirects.update_one(
         {"_id": redirect_doc["_id"], "consumed": False},
         {"$set": {"consumed": True, "status": "verified"}}
@@ -1358,10 +1389,7 @@ async def redirect_post_endpoint(
 
 
 def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
-    """
-    Compares the registrable "root" domain name of the incoming Referer
-    against the configured shortener domain, tolerant of subdomains and alternate TLDs.
-    """
+    """Compares the registrable root domain of Referer against shortener domain"""
     if not ref_netloc or not shortener_domain:
         return False
 
@@ -1420,7 +1448,6 @@ def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
         if not ref_netloc or not short_netloc:
             return False
 
-        # 1. Exact or subdomain match
         if ref_netloc == short_netloc:
             return True
         if ref_netloc.endswith("." + short_netloc) or short_netloc.endswith("." + ref_netloc):
@@ -1428,7 +1455,6 @@ def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
         if short_netloc in ref_netloc or ref_netloc in short_netloc:
             return True
 
-        # 2. Root domain comparison
         if check_referer_root(ref_netloc, short_netloc):
             return True
 
@@ -1445,10 +1471,10 @@ async def original_shortlink(
 ):
 
     # Health and special routes exceptions
-    if short_id in ["health", "continue"]:
+    if short_id in ["health", "continue", "redirect", "verify", "blocked"]:
         raise HTTPException(status_code=404)
 
-    # 1. Fetch the mapping first so we can determine the configured shortener details
+    # 1. Fetch the mapping first
     link = await db.protected_links.find_one({"short_id": short_id})
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
@@ -1462,7 +1488,7 @@ async def original_shortlink(
     user_agent = request.headers.get("user-agent", "")
     referer = request.headers.get("referer", "")
 
-    # Check for explicit userscript/bypass tool/nicktrick/bot indicators
+    # Check for explicit userscript/bypass tool indicators
     is_bypass, bypass_reason = detect_userscript_bypass(request)
 
     if is_bypass:
@@ -1486,7 +1512,7 @@ async def original_shortlink(
             await send_bypass_notification(user_id, short_id, reason, request, db)
             return bypass_detected_response()
 
-    # 2. Create a secure, short-lived server-side verification session with single-use token
+    # 2. Create a secure verification session
     session_id = secrets.token_urlsafe(32)
     token = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(16)
@@ -1514,7 +1540,7 @@ async def original_shortlink(
 
     await db.sessions.insert_one(session_doc)
 
-    # Update user statistics for legitimate session initialization
+    # Update user statistics
     await db.users.update_one(
         {"_id": user_id},
         {
@@ -1527,7 +1553,7 @@ async def original_shortlink(
         }
     )
 
-    # 3. Set the session ID cookie and redirect to continuation endpoint
+    # Set cookie and redirect
     response = RedirectResponse(url=f"/continue?token={token}", status_code=302)
     is_secure = request.url.scheme == "https"
     response.set_cookie(
@@ -1544,3 +1570,6 @@ async def original_shortlink(
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+# Add this to your settings or config
+# SECRET_KEY should be a strong random string stored in environment variables
