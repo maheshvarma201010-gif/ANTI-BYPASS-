@@ -203,15 +203,44 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
 async def check_request_allowed_domain(request: Request, db = None) -> bool:
     """
     Check if the Referer or Origin header matches an allowed domain.
+    Safe against disconnected or uninitialized DB instances.
     """
     referer = request.headers.get("referer", "")
     origin = request.headers.get("origin", "")
 
-    if referer and await is_allowed_referer(referer, db):
-        return True
+    try:
+        if referer and await is_allowed_referer(referer, db):
+            return True
 
-    if origin and await is_allowed_referer(origin, db):
-        return True
+        if origin and await is_allowed_referer(origin, db):
+            return True
+    except Exception as e:
+        logger.warning(f"Error checking allowed domain: {e}")
+
+    return False
+
+def is_antibypass_domain_exemption(request: Request) -> bool:
+    """
+    Check if request URL, referer, or origin domain name contains antibypass or anti-bypass.
+    """
+    try:
+        url_host = request.url.netloc.lower()
+        if "antibypass" in url_host or "anti-bypass" in url_host:
+            return True
+
+        referer = request.headers.get("referer", "")
+        if referer:
+            ref_host = urlparse(referer if "://" in referer else f"http://{referer}").netloc.lower()
+            if "antibypass" in ref_host or "anti-bypass" in ref_host:
+                return True
+
+        origin = request.headers.get("origin", "")
+        if origin:
+            orig_host = urlparse(origin if "://" in origin else f"http://{origin}").netloc.lower()
+            if "antibypass" in orig_host or "anti-bypass" in orig_host:
+                return True
+    except Exception as e:
+        logger.warning(f"Error checking antibypass domain exemption: {e}")
 
     return False
 
@@ -222,14 +251,14 @@ async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, s
     raw_url = str(request.url)
     url_dec = unquote(unquote(raw_url)).lower()
     
+    # Skip bypass detection for exempted domains (antibypass domain names or allowed referers/origins)
+    if is_antibypass_domain_exemption(request) or await check_request_allowed_domain(request, db):
+        return False, ""
+
     banned_keywords = [
         "nicktrick", "javascript:", "564048", "greasyfork", "tampermonkey",
         "violentmonkey", "stealth final", "smart nicktrick", "ddxbypass", "bypassbot"
     ]
-    
-    # If user request comes from an allowed domain (Referer or Origin), skip false-positive checks
-    if await check_request_allowed_domain(request, db):
-        return False, ""
 
     for kw in banned_keywords:
         if kw in referer_dec:
@@ -244,7 +273,10 @@ async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, s
         if k_dec == "nicktrick" or "nicktrick" in k_dec or "nicktrick" in v_dec:
             return True, "NickTrick parameter detected in query string"
         
-        if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
+        if ("bypass" in k_dec or "bypass" in v_dec) and (
+            "anti-bypass" not in k_dec and "anti-bypass" not in v_dec and
+            "antibypass" not in k_dec and "antibypass" not in v_dec
+        ):
             return True, "Bypass query parameter pattern detected"
     
     user_agent = request.headers.get("user-agent", "")
