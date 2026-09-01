@@ -691,6 +691,68 @@ async def get_user_verification_history(user_id: ObjectId, db) -> Dict[str, Any]
         "blocked_count": user.get("blocked_count", 0)
     }
 
+def check_referer_root(domain: str, referer: str) -> bool:
+    """
+    Check referer domain against target domain with root and subdomain tolerance.
+    Returns True if referer matches domain exactly, as a subdomain, or shares the same root domain.
+    """
+    if not domain or not referer:
+        return False
+
+    parsed_ref = urlparse(referer if "://" in referer else f"http://{referer}")
+    ref_host = (parsed_ref.netloc or parsed_ref.path).lower().split(":")[0].strip()
+
+    parsed_dom = urlparse(domain if "://" in domain else f"http://{domain}")
+    dom_host = (parsed_dom.netloc or parsed_dom.path).lower().split(":")[0].strip()
+
+    if not ref_host or not dom_host:
+        return False
+
+    if ref_host == dom_host:
+        return True
+
+    if ref_host.endswith(f".{dom_host}") or dom_host.endswith(f".{ref_host}"):
+        return True
+
+    # Root domain comparison (e.g., a.domain.com vs b.domain.com)
+    ref_parts = ref_host.split(".")
+    dom_parts = dom_host.split(".")
+    if len(ref_parts) >= 2 and len(dom_parts) >= 2:
+        ref_root = ".".join(ref_parts[-2:])
+        dom_root = ".".join(dom_parts[-2:])
+        if ref_root == dom_root:
+            return True
+
+    return False
+
+
+async def is_valid_shortener_referer(shortener_domain: str, referer: str, db=None) -> bool:
+    """
+    Validate referer against shortener domain using root/subdomain tolerance
+    and allowed/related referers check with safe DB fallback.
+    """
+    if not referer:
+        return False
+
+    if shortener_domain and check_referer_root(shortener_domain, referer):
+        return True
+
+    if db is not None:
+        try:
+            if await is_allowed_referer(referer, db):
+                return True
+        except Exception as e:
+            logger.warning(f"Error checking is_allowed_referer in is_valid_shortener_referer: {e}")
+
+        try:
+            if shortener_domain and await is_related_domain(referer, shortener_domain, db):
+                return True
+        except Exception as e:
+            logger.warning(f"Error checking is_related_domain in is_valid_shortener_referer: {e}")
+
+    return False
+
+
 async def is_allowed_referer(referer: str, db) -> bool:
     """Check if referer domain or host matches any allowed referer domains"""
     if not referer:
@@ -703,12 +765,22 @@ async def is_allowed_referer(referer: str, db) -> bool:
         return False
 
     if db is not None:
-        cursor = db.allowed_referers.find({})
-        async for doc in cursor:
-            allowed_domain = doc.get("domain", "").strip().lower()
-            if allowed_domain:
-                if host == allowed_domain or host.endswith(f".{allowed_domain}"):
-                    return True
+        try:
+            cursor = db.allowed_referers.find({})
+            if hasattr(cursor, "__aiter__"):
+                async for doc in cursor:
+                    allowed_domain = doc.get("domain", "").strip().lower()
+                    if allowed_domain:
+                        if host == allowed_domain or host.endswith(f".{allowed_domain}"):
+                            return True
+            else:
+                for doc in cursor:
+                    allowed_domain = doc.get("domain", "").strip().lower()
+                    if allowed_domain:
+                        if host == allowed_domain or host.endswith(f".{allowed_domain}"):
+                            return True
+        except Exception as e:
+            logger.warning(f"DB error checking allowed_referers: {e}")
 
     return False
 
