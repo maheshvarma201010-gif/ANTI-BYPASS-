@@ -109,6 +109,7 @@ class ConnectStates(StatesGroup):
     waiting_for_manual_start_time = State()
     waiting_for_manual_end_time = State()
     waiting_for_admin_images = State()
+    waiting_for_bypass_url = State()
 
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -158,6 +159,7 @@ async def cmd_help(message: types.Message):
         "• <code>/api</code> - View all generated Anti-Bypass (ABP) API keys.\n"
         "• <code>/stats</code> - Monitor real-time traffic & blocked bypass metrics.\n"
         "• <code>/panel</code> - Admin Panel (Banner Images & Configuration).\n"
+        "• <code>/redirecttobp</code> - Set custom bypass-detected redirect URL (Admin).\n"
         "• <code>/help</code> - Show this detailed help manual.\n"
         "• <code>/delete</code> - Remove account and all stored configurations.\n\n"
         "<b>⚙️ Verification Modes:</b>\n"
@@ -777,3 +779,55 @@ async def cb_panel_clear_images(callback: types.CallbackQuery):
         reply_markup=get_panel_keyboard()
     )
     await safe_callback_answer(callback)
+
+@router.message(Command("redirecttobp"))
+async def cmd_redirecttobp(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await send_bot_msg(
+            message,
+            "<b>🚫 Access Denied</b>\n\n<blockquote>You do not have administrative privileges to set the bypass redirect URL.</blockquote>"
+        )
+        return
+
+    db = get_database()
+    current_cfg = await db.settings.find_one({"key": "bypass_redirect_url"})
+    current_url = current_cfg.get("url") if current_cfg else "Default (https://empty-workers-playground.rolexoriginalstg.workers.dev/verify)"
+
+    await state.set_state(ConnectStates.waiting_for_bypass_url)
+    await send_bot_msg(
+        message,
+        "<b>🔗 Configure Bypass-Detected Redirect URL</b>\n\n"
+        f"<blockquote>• <b>Current Redirect URL:</b> <code>{current_url}</code></blockquote>\n\n"
+        "Please send the new redirect URL (starting with <code>http://</code> or <code>https://</code>):"
+    )
+
+@router.message(ConnectStates.waiting_for_bypass_url)
+async def process_bypass_url(message: types.Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+
+    raw_url = message.text.strip()
+    if not (raw_url.startswith("http://") or raw_url.startswith("https://")):
+        await send_bot_msg(
+            message,
+            "<b>❌ Invalid URL</b>\n\n<blockquote>Please enter a valid URL starting with <code>http://</code> or <code>https://</code>.</blockquote>"
+        )
+        return
+
+    clean_url = raw_url
+
+    db = get_database()
+    await db.settings.update_one(
+        {"key": "bypass_redirect_url"},
+        {"$set": {"url": clean_url, "updated_at": datetime.utcnow()}},
+        upsert=True
+    )
+
+    await state.clear()
+    await send_bot_msg(
+        message,
+        "<b>✅ Bypass Redirect URL Saved!</b>\n\n"
+        f"<blockquote>All bypass-detection and interception endpoints will now redirect to:\n"
+        f"<code>{clean_url}</code></blockquote>"
+    )

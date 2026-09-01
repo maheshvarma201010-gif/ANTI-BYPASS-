@@ -28,19 +28,30 @@ from urllib.parse import urlparse
 from app.core.referer import is_allowed_referer, is_related_domain, is_whitelisted_user, is_development_environment, get_user_verification_history, is_legitimate_no_referer
 from bson import ObjectId
 
-DEFAULT_BYPASS_URL = "https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target=aHR0cHM6Ly9maWxlZGl0Y2hmaWxlcy5zdC9iYWxwaGExMi8wYWI4OTk1ZGE4NTZlZDQ3ZjdhOC9Ub3AuVGVsdWd1LkluZmx1ZW5jZXIuUzAxRTA5LkJlc3Qub2YuYWxsLlBhcnQuMS43MjBwLkFIQS5XRUItREwuVGVsdWd1LkFBQy4yLjAuSC4yNjUtZU1wVHkubWt2&hash=497e48e0ffb37f64"
+DEFAULT_BYPASS_BASE_URL = "https://empty-workers-playground.rolexoriginalstg.workers.dev/verify"
+DEFAULT_TARGET_URL = "https://fileditchfiles.st/balpha12/0ab8995da856ed47f7a8/Top.Telugu.Influencer.S01E09.Best.of.all.Part.1.720p.AHA.WEB-DL.Telugu.AAC.2.0.H.265-eMpTy.mkv"
 
-def get_bypass_url(target_url: Optional[str] = None, base_url: Optional[str] = None) -> str:
-    b_url = (base_url if base_url is not None else (settings.BASE_URL or "")).rstrip("/")
-    if not target_url:
-        return DEFAULT_BYPASS_URL
+async def get_bypass_url(target_url: Optional[str] = None, db = None) -> str:
+    base_url = DEFAULT_BYPASS_BASE_URL
+    if db is not None:
+        try:
+            setting = await db.settings.find_one({"key": "bypass_redirect_url"})
+            if setting and setting.get("url"):
+                base_url = setting["url"]
+        except Exception:
+            pass
+
+    base_url = base_url.split("?")[0].rstrip("/")
+    effective_target = target_url or DEFAULT_TARGET_URL
+
     try:
-        target_b64 = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
-        hash_val = hashlib.md5(target_url.encode("utf-8")).hexdigest()[:16]
-        prefix = f"{b_url}" if b_url else "https://empty-workers-playground.rolexoriginalstg.workers.dev"
-        return f"{prefix}/verify?target={target_b64}&hash={hash_val}"
+        target_b64 = base64.b64encode(effective_target.encode("utf-8")).decode("utf-8")
+        hash_val = hashlib.md5(effective_target.encode("utf-8")).hexdigest()[:16]
+        return f"{base_url}?target={target_b64}&hash={hash_val}"
     except Exception:
-        return DEFAULT_BYPASS_URL
+        target_b64 = base64.b64encode(DEFAULT_TARGET_URL.encode("utf-8")).decode("utf-8")
+        hash_val = hashlib.md5(DEFAULT_TARGET_URL.encode("utf-8")).hexdigest()[:16]
+        return f"{DEFAULT_BYPASS_BASE_URL}?target={target_b64}&hash={hash_val}"
 
 BYPASS_DETECTED_TEMPLATE = """
 <!DOCTYPE html>
@@ -989,11 +1000,8 @@ async def blocked_page(
                 await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
                 await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
 
-    # If there are query parameters or accessing /verify, render the bypass detected security page
-    return HTMLResponse(
-        content=BYPASS_DETECTED_TEMPLATE,
-        status_code=403
-    )
+    redirect_url = await get_bypass_url(target_url, db)
+    return RedirectResponse(url=redirect_url, status_code=302)
 
 @app.get("/continue")
 async def continue_endpoint(
@@ -1011,7 +1019,7 @@ async def continue_endpoint(
 
     # Protection 1: Invalid/missing token
     if not session:
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(None, db), status_code=302)
 
     user_id_str = session.get("user_id")
     user_id = ObjectId(user_id_str) if user_id_str else None
@@ -1028,7 +1036,7 @@ async def continue_endpoint(
             await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
-        return RedirectResponse(url=get_bypass_url(session.get("original_url")), status_code=302)
+        return RedirectResponse(url=await get_bypass_url(session.get("original_url"), db), status_code=302)
 
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
@@ -1042,14 +1050,14 @@ async def continue_endpoint(
             await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
         # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(session.get("original_url"), db), status_code=302)
 
     # Protection 3: Reusing an already completed/consumed verification session
     if session.get("consumed", False) or session.get("status") in ["verified", "expired"]:
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Token already used", request, db)
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(session.get("original_url"), db), status_code=302)
 
     # Protection 4: Session validation (either Cookie match OR fallback to IP+UA match if cookies blocked/incognito)
     cookie_valid = cookie_session_id and cookie_session_id == session["session_id"]
@@ -1069,7 +1077,7 @@ async def continue_endpoint(
             await send_bypass_notification(user_id, short_id, reason, request, db)
         # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(session.get("original_url"), db), status_code=302)
 
     # Consume/invalidate token atomically server-side to prevent TOCTOU race conditions / parallel replay
     result = await db.sessions.update_one(
@@ -1080,7 +1088,7 @@ async def continue_endpoint(
         if user_id:
             await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
             await send_bypass_notification(user_id, short_id, "Token already used", request, db)
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(session.get("original_url"), db), status_code=302)
 
     # Retrieve real/original destination URL
     destination_url = session["original_url"]
@@ -1147,16 +1155,18 @@ async def redirect_endpoint(
     # Retrieve the redirect mapping
     redirect_doc = await db.redirects.find_one({"redirect_id": id})
     if not redirect_doc:
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(None, db), status_code=302)
+
+    target_url = redirect_doc.get("target_url")
 
     # Replay/duplicate protection
     if redirect_doc.get("consumed", False) or redirect_doc.get("status") in ["verified", "expired"]:
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(target_url, db), status_code=302)
 
     # 120 seconds TTL check
     if time.time() - redirect_doc["created_at"] > 120 or time.time() > redirect_doc.get("expires_at", redirect_doc["created_at"] + 120):
         await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(target_url, db), status_code=302)
 
     # MANUAL mode timer window validation
     if redirect_doc.get("mode") == "MANUAL":
@@ -1167,13 +1177,13 @@ async def redirect_endpoint(
             elapsed = time.time() - start_t
             if elapsed < min_s or elapsed > max_s:
                 await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
-                return RedirectResponse(url="/blocked", status_code=302)
+                return RedirectResponse(url=await get_bypass_url(target_url, db), status_code=302)
 
     # Challenge Nonce validation if nonce parameter was provided
     expected_nonce = redirect_doc.get("nonce")
     nonce_param = request.query_params.get("nonce")
     if expected_nonce and nonce_param and expected_nonce != nonce_param:
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(target_url, db), status_code=302)
 
     # SHA-256 session integrity check (IP + User-Agent matching via secure hash)
     session_hash = redirect_doc.get("session_hash")
@@ -1185,19 +1195,19 @@ async def redirect_endpoint(
         expected_input = f"{client_ip}:{normalized_ua}:{salt}"
         expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
         if session_hash != expected_hash:
-            return RedirectResponse(url="/blocked", status_code=302)
+            return RedirectResponse(url=await get_bypass_url(target_url, db), status_code=302)
 
     # Same-session validation
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
     if expected_session_id and expected_session_id != cookie_session_id:
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(target_url, db), status_code=302)
 
     # Same-tab validation
     expected_tab_token = redirect_doc.get("tab_token")
     tab_param = request.query_params.get("tab")
     if expected_tab_token and expected_tab_token != tab_param:
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(target_url, db), status_code=302)
 
     # Atomically mark the redirect ID as consumed and verified
     result = await db.redirects.update_one(
@@ -1205,7 +1215,7 @@ async def redirect_endpoint(
         {"$set": {"consumed": True, "status": "verified"}}
     )
     if result.modified_count == 0:
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=await get_bypass_url(target_url, db), status_code=302)
 
     # Secure server-side HTTP 302 redirect
     return RedirectResponse(url=redirect_doc["target_url"], status_code=302)
@@ -1455,7 +1465,7 @@ async def original_shortlink(
     if is_bypass:
         await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
         await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        return RedirectResponse(url=get_bypass_url(link.get("original_url")), status_code=302)
+        return RedirectResponse(url=await get_bypass_url(link.get("original_url"), db), status_code=302)
 
     # ============== REFERER/ORIGIN VALIDATION ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
@@ -1471,7 +1481,7 @@ async def original_shortlink(
                 {"$inc": {"blocked_count": 1, "referer_failures": 1}}
             )
             await send_bypass_notification(user_id, short_id, reason, request, db)
-            return RedirectResponse(url=get_bypass_url(link.get("original_url")), status_code=302)
+            return RedirectResponse(url=await get_bypass_url(link.get("original_url"), db), status_code=302)
 
     # 2. Create a secure, short-lived server-side verification session with single-use token
     session_id = secrets.token_urlsafe(32)
