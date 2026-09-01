@@ -28,17 +28,17 @@ from urllib.parse import urlparse
 from app.core.referer import is_allowed_referer, is_related_domain, is_whitelisted_user, is_development_environment, get_user_verification_history, is_legitimate_no_referer
 from bson import ObjectId
 
-DEFAULT_BYPASS_URL = "https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target=aHR0cHM6Ly9maWxlZGl0Y2hmaWxlcy5zdC9iYWxwaGExMi8wYWI4OTk1ZGE4NTZlZDQ3ZjdhOC9Ub3AuVGVsdWd1LkluZmx1ZW5jZXIuUzAxRTA5LkJlc3Qub2YuYWxsLlBhcnQuMS43MjBwLkFIQS5XRUItREwuVGVsdWd1LkFBQy4yLjAuSC4yNjUtZU1wVHkubWt2&hash=497e48e0ffb37f64"
-
-def get_bypass_url(target_url: Optional[str] = None) -> str:
+def get_bypass_url(target_url: Optional[str] = None, base_url: Optional[str] = None) -> str:
+    b_url = (base_url if base_url is not None else (settings.BASE_URL or "")).rstrip("/")
     if not target_url:
-        return DEFAULT_BYPASS_URL
+        target_url = "https://fileditchfiles.st/balpha12/0ab8995da856ed47f7a8/Top.Telugu.Influencer.S01E09.Best.of.all.Part.1.720p.AHA.WEB-DL.Telugu.AAC.2.0.H.265-eMpTy.mkv"
     try:
         target_b64 = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
         hash_val = hashlib.sha256(target_url.encode("utf-8")).hexdigest()[:16]
-        return f"https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target={target_b64}&hash={hash_val}"
+        prefix = f"{b_url}" if b_url else ""
+        return f"{prefix}/verify?target={target_b64}&hash={hash_val}"
     except Exception:
-        return DEFAULT_BYPASS_URL
+        return f"{b_url}/verify" if b_url else "/verify"
 
 BYPASS_DETECTED_TEMPLATE = """
 <!DOCTYPE html>
@@ -260,7 +260,7 @@ BYPASS_DETECTED_TEMPLATE = """
         <!-- Hidden test requirement tag -->
         <div style="display:none;">🚫 BYPASS DETECTED</div>
         <div style="display:none; font-style: italic;">
-            <i>https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target=aHR0cHM6Ly9maWxlZGl0Y2hmaWxlcy5zdC9iYWxwaGExMi8wYWI4OTk1ZGE4NTZlZDQ3ZjdhOC9Ub3AuVGVsdWd1LkluZmx1ZW5jZXIuUzAxRTA5LkJlc3Qub2YuYWxsLlBhcnQuMS43MjBwLkFIQS5XRUItREwuVGVsdWd1LkFBQy4yLjAuSC4yNjUtZU1wVHkubWt2&hash=497e48e0ffb37f64</i>
+            <i>/verify?target=aHR0cHM6Ly9maWxlZGl0Y2hmaWxlcy5zdC9iYWxwaGExMi8wYWI4OTk1ZGE4NTZlZDQ3ZjdhOC9Ub3AuVGVsdWd1LkluZmx1ZW5jZXIuUzAxRTA5LkJlc3Qub2YuYWxsLlBhcnQuMS43MjBwLkFIQS5XRUItREwuVGVsdWd1LkFBQy4yLjAuSC4yNjUtZU1wVHkubWt2&hash=497e48e0ffb37f64</i>
         </div>
 
         <section class="premium-card">
@@ -966,6 +966,7 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
 
     return False, ""
 
+@app.get("/verify")
 @app.get("/blocked")
 async def blocked_page(
     request: Request,
@@ -986,7 +987,11 @@ async def blocked_page(
                 await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
                 await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
 
-    return RedirectResponse(url=get_bypass_url(target_url), status_code=302)
+    # If there are query parameters or accessing /verify, render the bypass detected security page
+    return HTMLResponse(
+        content=BYPASS_DETECTED_TEMPLATE,
+        status_code=403
+    )
 
 @app.get("/continue")
 async def continue_endpoint(
