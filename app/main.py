@@ -30,15 +30,13 @@ from bson import ObjectId
 
 DEFAULT_BYPASS_URL = "https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target=aHR0cHM6Ly9maWxlZGl0Y2hmaWxlcy5zdC9iYWxwaGExMi8wYWI4OTk1ZGE4NTZlZDQ3ZjdhOC9Ub3AuVGVsdWd1LkluZmx1ZW5jZXIuUzAxRTA5LkJlc3Qub2YuYWxsLlBhcnQuMS43MjBwLkFIQS5XRUItREwuVGVsdWd1LkFBQy4yLjAuSC4yNjUtZU1wVHkubWt2&hash=497e48e0ffb37f64"
 
-def get_bypass_url(target_url: Optional[str] = None, base_url: Optional[str] = None) -> str:
-    b_url = (base_url if base_url is not None else (settings.BASE_URL or "")).rstrip("/")
+def get_bypass_url(target_url: Optional[str] = None) -> str:
     if not target_url:
         return DEFAULT_BYPASS_URL
     try:
         target_b64 = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
-        hash_val = hashlib.md5(target_url.encode("utf-8")).hexdigest()[:16]
-        prefix = f"{b_url}" if b_url else "https://empty-workers-playground.rolexoriginalstg.workers.dev"
-        return f"{prefix}/verify?target={target_b64}&hash={hash_val}"
+        hash_val = hashlib.sha256(target_url.encode("utf-8")).hexdigest()[:16]
+        return f"https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target={target_b64}&hash={hash_val}"
     except Exception:
         return DEFAULT_BYPASS_URL
 

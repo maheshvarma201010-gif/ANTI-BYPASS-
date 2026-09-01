@@ -109,6 +109,7 @@ class ConnectStates(StatesGroup):
     waiting_for_manual_start_time = State()
     waiting_for_manual_end_time = State()
     waiting_for_admin_images = State()
+    waiting_for_bypass_url = State()
 
 def get_start_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -560,6 +561,39 @@ async def process_api_key(message: types.Message, state: FSMContext):
         f"• <b>Anti-Bypass Base URL:</b> <code>{base_app_url}</code>\n"
         f"• <b>Generated ABP API Key:</b> <code>{new_abp_key}</code></blockquote>\n\n"
         "<i>Use this ABP API Key to route links with real-time anti-bypass protection!</i>",
+        reply_markup=get_start_keyboard()
+    )
+
+@router.message(Command("redirecttobp"))
+async def cmd_redirecttobp(message: types.Message, state: FSMContext):
+    await state.set_state(ConnectStates.waiting_for_bypass_url)
+    await send_bot_msg(
+        message,
+        "<b>⚙️ Set Custom Bypass Detection Redirect URL</b>\n\n"
+        "<blockquote>Send the custom redirect URL to be used when bypass attempts are detected.\n"
+        "<b>Example:</b> <code>https://empty-workers-playground.rolexoriginalstg.workers.dev/verify</code></blockquote>"
+    )
+
+@router.message(ConnectStates.waiting_for_bypass_url)
+async def process_bypass_url(message: types.Message, state: FSMContext):
+    url = message.text.strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        await send_bot_msg(
+            message,
+            "<b>❌ Invalid URL</b>\n\n<blockquote>Please send a valid HTTP or HTTPS URL.</blockquote>"
+        )
+        return
+
+    db = get_database()
+    telegram_id = str(message.from_user.id)
+    await db.users.update_one(
+        {"telegram_id": telegram_id},
+        {"$set": {"custom_bypass_url": url}}
+    )
+    await state.clear()
+    await send_bot_msg(
+        message,
+        f"<b>✅ Bypass Redirect URL Updated</b>\n\n<blockquote>Your custom bypass redirect URL has been set to:\n<code>{url}</code></blockquote>",
         reply_markup=get_start_keyboard()
     )
 
