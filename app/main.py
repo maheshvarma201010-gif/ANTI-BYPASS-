@@ -247,7 +247,7 @@ BYPASS_DETECTED_TEMPLATE = """
         <!-- Hidden test requirement tag -->
         <div style="display:none;">🚫 BYPASS DETECTED</div>
         <div style="display:none; font-style: italic;">
-            <i>http://blocked.local/""" + ("_" * 100005) + """</i>
+            <i>https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target=aHR0cHM6Ly9maWxlZGl0Y2hmaWxlcy5zdC9iYWxwaGExMi8wYWI4OTk1ZGE4NTZlZDQ3ZjdhOC9Ub3AuVGVsdWd1LkluZmx1ZW5jZXIuUzAxRTA5LkJlc3Qub2YuYWxsLlBhcnQuMS43MjBwLkFIQS5XRUItREwuVGVsdWd1LkFBQy4yLjAuSC4yNjUtZU1wVHkubWt2&hash=497e48e0ffb37f64</i>
         </div>
 
         <section class="premium-card">
