@@ -22,10 +22,23 @@ async def shutdown_db_client():
 import secrets
 import time
 import base64
+import hashlib
 from fastapi.responses import RedirectResponse
 from urllib.parse import urlparse
 from app.core.referer import is_allowed_referer, is_related_domain, is_whitelisted_user, is_development_environment, get_user_verification_history, is_legitimate_no_referer
 from bson import ObjectId
+
+DEFAULT_BYPASS_URL = "https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target=aHR0cHM6Ly9maWxlZGl0Y2hmaWxlcy5zdC9iYWxwaGExMi8wYWI4OTk1ZGE4NTZlZDQ3ZjdhOC9Ub3AuVGVsdWd1LkluZmx1ZW5jZXIuUzAxRTA5LkJlc3Qub2YuYWxsLlBhcnQuMS43MjBwLkFIQS5XRUItREwuVGVsdWd1LkFBQy4yLjAuSC4yNjUtZU1wVHkubWt2&hash=497e48e0ffb37f64"
+
+def get_bypass_url(target_url: Optional[str] = None) -> str:
+    if not target_url:
+        return DEFAULT_BYPASS_URL
+    try:
+        target_b64 = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
+        hash_val = hashlib.sha256(target_url.encode("utf-8")).hexdigest()[:16]
+        return f"https://empty-workers-playground.rolexoriginalstg.workers.dev/verify?target={target_b64}&hash={hash_val}"
+    except Exception:
+        return DEFAULT_BYPASS_URL
 
 BYPASS_DETECTED_TEMPLATE = """
 <!DOCTYPE html>
@@ -958,25 +971,22 @@ async def blocked_page(
     request: Request,
     db = Depends(get_database)
 ):
+    target_url = None
     # Check if a token, short_id, or redirect ID was passed in query string or Referer when a bypass URL was copied or expanded by Telegram/bots
     token = request.query_params.get("token")
 
     if token:
         session = await db.sessions.find_one({"token": token})
-        if session and session.get("user_id"):
-            user_id = ObjectId(session["user_id"])
-            s_id = session.get("short_id", "unknown")
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
-            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+        if session:
+            target_url = session.get("original_url")
+            if session.get("user_id"):
+                user_id = ObjectId(session["user_id"])
+                s_id = session.get("short_id", "unknown")
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
+                await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
 
-    # If there are any query parameters, redirect to clean /blocked URL to strip them from the address bar
-    if request.query_params:
-        return RedirectResponse(url="/blocked", status_code=302)
-    return HTMLResponse(
-        content=BYPASS_DETECTED_TEMPLATE,
-        status_code=403
-    )
+    return RedirectResponse(url=get_bypass_url(target_url), status_code=302)
 
 @app.get("/continue")
 async def continue_endpoint(
@@ -1011,7 +1021,7 @@ async def continue_endpoint(
             await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
         # INSTANTLY EXPIRE!
         await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=get_bypass_url(session.get("original_url")), status_code=302)
 
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
@@ -1438,7 +1448,7 @@ async def original_shortlink(
     if is_bypass:
         await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
         await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        return RedirectResponse(url="/blocked", status_code=302)
+        return RedirectResponse(url=get_bypass_url(link.get("original_url")), status_code=302)
 
     # ============== REFERER/ORIGIN VALIDATION ==============
     shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
@@ -1454,7 +1464,7 @@ async def original_shortlink(
                 {"$inc": {"blocked_count": 1, "referer_failures": 1}}
             )
             await send_bypass_notification(user_id, short_id, reason, request, db)
-            return RedirectResponse(url="/blocked", status_code=302)
+            return RedirectResponse(url=get_bypass_url(link.get("original_url")), status_code=302)
 
     # 2. Create a secure, short-lived server-side verification session with single-use token
     session_id = secrets.token_urlsafe(32)
