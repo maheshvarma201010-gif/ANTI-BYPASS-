@@ -7,6 +7,7 @@ import hmac
 import logging
 import html
 import httpx
+import asyncio
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, quote, unquote
@@ -161,7 +162,7 @@ def validate_secure_url(target_b64: str, hash_value: Optional[str] = None, salt:
     return True, target_url
 
 # =====================================================
-# Helper Functions
+# Referer and Origin Helper Functions
 # =====================================================
 
 def get_client_ip(request: Request) -> str:
@@ -200,6 +201,80 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
     
     return False, ""
 
+def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
+    """
+    Compares the registrable "root" domain name of the incoming Referer/Origin
+    against the configured shortener domain, tolerant of subdomains.
+    """
+    if not ref_netloc or not shortener_domain:
+        return False
+
+    def get_root_name(domain: str) -> str:
+        domain = domain.split(":")[0]
+        parts = [p for p in domain.split(".") if p]
+
+        common_tlds = {
+            "com", "co", "net", "org", "info", "io", "in", "xyz",
+            "biz", "us", "uk", "cc", "me", "top", "online", "site",
+            "live", "club", "tech", "work"
+        }
+
+        while len(parts) > 1 and parts[-1] in common_tlds:
+            parts = parts[:-1]
+
+        if not parts:
+            return domain
+
+        return parts[-1]
+
+    shortener_root = get_root_name(shortener_domain).lower()
+    ref_root = get_root_name(ref_netloc).lower()
+
+    if not shortener_root or not ref_root:
+        return False
+
+    if shortener_root == ref_root:
+        return True
+
+    if shortener_root in ref_root or ref_root in shortener_root:
+        return True
+
+    return False
+
+def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
+    if not shortener_base_url:
+        return True
+
+    if not referer:
+        return False
+
+    ref_clean = unquote(referer).strip()
+    shortener_clean = unquote(shortener_base_url).strip()
+
+    try:
+        ref_parsed = urlparse(ref_clean if "://" in ref_clean else f"http://{ref_clean}")
+        short_parsed = urlparse(shortener_clean if "://" in shortener_clean else f"http://{shortener_clean}")
+
+        ref_netloc = ref_parsed.netloc.lower().split(":")[0]
+        short_netloc = short_parsed.netloc.lower().split(":")[0]
+
+        if not ref_netloc or not short_netloc:
+            return False
+
+        if ref_netloc == short_netloc:
+            return True
+        if ref_netloc.endswith("." + short_netloc) or short_netloc.endswith("." + ref_netloc):
+            return True
+        if short_netloc in ref_netloc or ref_netloc in short_netloc:
+            return True
+
+        if check_referer_root(ref_netloc, short_netloc):
+            return True
+
+        return False
+    except Exception:
+        return False
+
 async def check_request_allowed_domain(request: Request, db = None) -> bool:
     """
     Check if the Referer or Origin header matches an allowed domain.
@@ -207,11 +282,19 @@ async def check_request_allowed_domain(request: Request, db = None) -> bool:
     referer = request.headers.get("referer", "")
     origin = request.headers.get("origin", "")
 
-    if referer and await is_allowed_referer(referer, db):
-        return True
+    if referer:
+        ref_lower = unquote(referer).lower()
+        if "antibypass" in ref_lower:
+            return True
+        if await is_allowed_referer(referer, db):
+            return True
 
-    if origin and await is_allowed_referer(origin, db):
-        return True
+    if origin:
+        orig_lower = unquote(origin).lower()
+        if "antibypass" in orig_lower:
+            return True
+        if await is_allowed_referer(origin, db):
+            return True
 
     return False
 
@@ -221,15 +304,37 @@ async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, s
     
     raw_url = str(request.url)
     url_dec = unquote(unquote(raw_url)).lower()
-    
-    banned_keywords = [
-        "nicktrick", "javascript:", "564048", "greasyfork", "tampermonkey",
-        "violentmonkey", "stealth final", "smart nicktrick", "ddxbypass", "bypassbot"
-    ]
-    
+
+    if raw_referer:
+        try:
+            ref_parsed = urlparse(raw_referer)
+            ref_path = ref_parsed.path.lower()
+            if "/blocked" in ref_path:
+                return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
+        except Exception:
+            pass
+
     # If user request comes from an allowed domain (Referer or Origin), skip false-positive checks
     if await check_request_allowed_domain(request, db):
         return False, ""
+
+    banned_keywords = [
+        "nicktrick",
+        "javascript:",
+        "564048",
+        "greasyfork",
+        "tampermonkey",
+        "violentmonkey",
+        "stealth final",
+        "smart nicktrick",
+        "nicktrick redirect error",
+        "top!==self",
+        "searchparams",
+        "document.write",
+        "document.open",
+        "ddxbypass",
+        "bypassbot"
+    ]
 
     for kw in banned_keywords:
         if kw in referer_dec:
@@ -237,6 +342,19 @@ async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, s
         if kw in url_dec:
             return True, f"Banned userscript pattern '{kw}' detected in Request URL"
     
+    banned_query_keywords = [
+        "nicktrick",
+        "javascript:",
+        "564048",
+        "smart nicktrick",
+        "greasyfork",
+        "tampermonkey",
+        "violentmonkey",
+        "stealth final",
+        "ddxbypass",
+        "bypassbot"
+    ]
+
     for k, v in request.query_params.items():
         k_dec = unquote(unquote(k)).lower()
         v_dec = unquote(unquote(v)).lower()
@@ -246,6 +364,10 @@ async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, s
         
         if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
             return True, "Bypass query parameter pattern detected"
+
+        for kw in banned_query_keywords:
+            if kw in k_dec or kw in v_dec:
+                return True, f"Banned userscript pattern '{kw}' detected in query parameters"
     
     user_agent = request.headers.get("user-agent", "")
     is_bot, bot_reason = is_bot_user_agent(user_agent)
@@ -300,8 +422,18 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
             "parse_mode": "HTML"
         }
         
-        async with httpx.AsyncClient() as client:
-            await client.post(url, json=payload, timeout=5.0)
+        for attempt in range(4):
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(url, json=payload, timeout=5.0)
+                    if resp.status_code == 200:
+                        return
+            except Exception as exc:
+                logger.warning(f"Telegram post exception on attempt {attempt + 1}: {exc}")
+
+            if attempt < 3:
+                await asyncio.sleep(2 ** attempt)
+
     except Exception as e:
         logger.error(f"Failed to send Telegram notification: {e}")
 
@@ -310,8 +442,15 @@ def bypass_detected_response():
     content = load_template("bypass_detected.html")
     return HTMLResponse(content=content, status_code=403)
 
+async def handle_bypass_redirect(target_url: str = DEFAULT_TARGET_URL, db = None):
+    """
+    Return a redirect to the configured bypass URL.
+    """
+    url = await get_bypass_url(target_url, db)
+    return RedirectResponse(url=url, status_code=302)
+
 # =====================================================
-# Main Endpoints with target/hash/salt URL Structure
+# Main Endpoints
 # =====================================================
 
 @app.get("/")
@@ -328,11 +467,11 @@ async def verify_endpoint(
     /?target={base64_url}&hash={hmac_md5}&salt={salt} or /verify?target=...
     """
     if not target:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
     
     is_valid, target_url = validate_secure_url(target, hash, salt)
     if not is_valid or not target_url:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
     
     is_bypass, bypass_reason = await detect_userscript_bypass(request, db)
     if is_bypass:
@@ -346,7 +485,7 @@ async def verify_endpoint(
                                                   f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
             except Exception as e:
                 logger.error(f"DB error during bypass check: {e}")
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
     user_id = None
     short_id = "unknown"
@@ -466,6 +605,29 @@ async def verify_endpoint(
     
     return RedirectResponse(url=target_url, status_code=302)
 
+@app.get("/blocked")
+async def blocked_page(
+    request: Request,
+    db = Depends(get_database)
+):
+    token = request.query_params.get("token")
+
+    if token and db is not None:
+        try:
+            session = await db.sessions.find_one({"token": token})
+            if session and session.get("user_id"):
+                user_id = ObjectId(session["user_id"])
+                s_id = session.get("short_id", "unknown")
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
+                await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+        except Exception as e:
+            logger.error(f"DB error in /blocked: {e}")
+
+    if request.query_params:
+        return RedirectResponse(url="/blocked", status_code=302)
+    return bypass_detected_response()
+
 @app.get("/continue")
 async def continue_endpoint(
     request: Request,
@@ -474,7 +636,7 @@ async def continue_endpoint(
 ):
     """Continue endpoint for session verification"""
     if db is None:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
 
     try:
         session = await db.sessions.find_one({"token": token})
@@ -486,11 +648,12 @@ async def continue_endpoint(
         session = None
     
     if not session:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
     
     user_id_str = session.get("user_id")
     user_id = ObjectId(user_id_str) if user_id_str else None
     short_id = session.get("short_id", "unknown")
+    destination_url = session.get("original_url", DEFAULT_TARGET_URL)
     
     is_bypass, bypass_reason = await detect_userscript_bypass(request, db)
     if is_bypass:
@@ -504,7 +667,7 @@ async def continue_endpoint(
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
         except Exception:
             pass
-        return bypass_detected_response()
+        return await handle_bypass_redirect(destination_url, db)
     
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
@@ -521,7 +684,7 @@ async def continue_endpoint(
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         except Exception:
             pass
-        return bypass_detected_response()
+        return await handle_bypass_redirect(destination_url, db)
     
     if session.get("consumed", False) or session.get("status") in ["verified", "expired"]:
         if user_id:
@@ -530,7 +693,7 @@ async def continue_endpoint(
                 await send_bypass_notification(user_id, short_id, "Token already used", request, db)
             except Exception:
                 pass
-        return bypass_detected_response()
+        return await handle_bypass_redirect(destination_url, db)
     
     cookie_valid = cookie_session_id and cookie_session_id == session["session_id"]
     fallback_valid = (not cookie_session_id) and (session["client_ip"] == client_ip) and (session["user_agent"] == user_agent)
@@ -547,7 +710,7 @@ async def continue_endpoint(
             await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         except Exception:
             pass
-        return bypass_detected_response()
+        return await handle_bypass_redirect(destination_url, db)
     
     try:
         result = await db.sessions.update_one(
@@ -558,12 +721,10 @@ async def continue_endpoint(
             if user_id:
                 await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
                 await send_bypass_notification(user_id, short_id, "Token already used", request, db)
-            return bypass_detected_response()
+            return await handle_bypass_redirect(destination_url, db)
     except Exception as e:
         logger.error(f"DB error updating session state: {e}")
-        return bypass_detected_response()
-
-    destination_url = session["original_url"]
+        return await handle_bypass_redirect(destination_url, db)
     
     accept_header = request.headers.get("accept", "").lower()
     user_agent_lower = user_agent.lower()
@@ -622,7 +783,7 @@ async def redirect_endpoint(
 ):
     """Final redirect endpoint"""
     if db is None:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
 
     try:
         redirect_doc = await db.redirects.find_one({"redirect_id": id})
@@ -631,19 +792,19 @@ async def redirect_endpoint(
         redirect_doc = None
 
     if not redirect_doc:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
     
-    target_url = redirect_doc.get("target_url")
+    target_url = redirect_doc.get("target_url", DEFAULT_TARGET_URL)
     
     if redirect_doc.get("consumed", False) or redirect_doc.get("status") in ["verified", "expired"]:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
     if time.time() - redirect_doc["created_at"] > 120 or time.time() > redirect_doc.get("expires_at", redirect_doc["created_at"] + 120):
         try:
             await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
         except Exception:
             pass
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
     if redirect_doc.get("mode") == "MANUAL":
         min_s = redirect_doc.get("manual_min_seconds")
@@ -656,12 +817,12 @@ async def redirect_endpoint(
                     await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
                 except Exception:
                     pass
-                return bypass_detected_response()
+                return await handle_bypass_redirect(target_url, db)
     
     expected_nonce = redirect_doc.get("nonce")
     nonce_param = request.query_params.get("nonce")
     if expected_nonce and nonce_param and expected_nonce != nonce_param:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
     session_hash = redirect_doc.get("session_hash")
     salt = redirect_doc.get("salt")
@@ -671,17 +832,17 @@ async def redirect_endpoint(
         expected_input = f"{client_ip}:{normalized_ua}:{salt}"
         expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
         if session_hash != expected_hash:
-            return bypass_detected_response()
+            return await handle_bypass_redirect(target_url, db)
     
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
     if expected_session_id and expected_session_id != cookie_session_id:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
     expected_tab_token = redirect_doc.get("tab_token")
     tab_param = request.query_params.get("tab")
     if expected_tab_token and expected_tab_token != tab_param:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
     try:
         result = await db.redirects.update_one(
@@ -689,12 +850,96 @@ async def redirect_endpoint(
             {"$set": {"consumed": True, "status": "verified"}}
         )
         if result.modified_count == 0:
-            return bypass_detected_response()
+            return await handle_bypass_redirect(target_url, db)
     except Exception as e:
         logger.error(f"DB error updating redirect state: {e}")
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
-    return RedirectResponse(url=redirect_doc["target_url"], status_code=302)
+    return RedirectResponse(url=target_url, status_code=302)
+
+@app.post("/redirect")
+@app.post("/api/verify-redirect")
+async def redirect_post_endpoint(
+    request: Request,
+    body: dict = Body(...),
+    db = Depends(get_database)
+):
+    redirect_id = body.get("id")
+    if not redirect_id:
+        raise HTTPException(status_code=400, detail="Missing redirect ID")
+
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database disconnected")
+
+    try:
+        redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
+    except Exception as e:
+        logger.error(f"DB error in redirect POST: {e}")
+        redirect_doc = None
+
+    if not redirect_doc:
+        raise HTTPException(status_code=404, detail="Redirect not found")
+
+    if redirect_doc.get("consumed", False) or redirect_doc.get("status") in ["verified", "expired"]:
+        raise HTTPException(status_code=410, detail="Redirect already consumed")
+
+    if time.time() - redirect_doc["created_at"] > 120 or time.time() > redirect_doc.get("expires_at", redirect_doc["created_at"] + 120):
+        try:
+            await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        except Exception:
+            pass
+        raise HTTPException(status_code=410, detail="Redirect expired")
+
+    if redirect_doc.get("mode") == "MANUAL":
+        min_s = redirect_doc.get("manual_min_seconds")
+        max_s = redirect_doc.get("manual_max_seconds")
+        if min_s is not None and max_s is not None:
+            start_t = redirect_doc.get("session_start_time", redirect_doc["created_at"])
+            elapsed = time.time() - start_t
+            if elapsed < min_s or elapsed > max_s:
+                try:
+                    await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+                except Exception:
+                    pass
+                raise HTTPException(status_code=410, detail="Verification expired")
+
+    expected_nonce = redirect_doc.get("nonce")
+    nonce_param = body.get("nonce")
+    if expected_nonce and nonce_param and expected_nonce != nonce_param:
+        raise HTTPException(status_code=403, detail="Nonce verification failed")
+
+    session_hash = redirect_doc.get("session_hash")
+    salt = redirect_doc.get("salt")
+    if session_hash and salt:
+        normalized_ua = request.headers.get("user-agent", "").strip()
+        client_ip = get_client_ip(request)
+        expected_input = f"{client_ip}:{normalized_ua}:{salt}"
+        expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
+        if session_hash != expected_hash:
+            raise HTTPException(status_code=403, detail="Session verification failed")
+
+    expected_session_id = redirect_doc.get("session_id")
+    cookie_session_id = request.cookies.get("session_id")
+    if expected_session_id and expected_session_id != cookie_session_id:
+        raise HTTPException(status_code=403, detail="Session verification failed")
+
+    expected_tab_token = redirect_doc.get("tab_token")
+    tab_param = body.get("tab")
+    if expected_tab_token and expected_tab_token != tab_param:
+        raise HTTPException(status_code=403, detail="Tab security violation")
+
+    try:
+        result = await db.redirects.update_one(
+            {"_id": redirect_doc["_id"], "consumed": False},
+            {"$set": {"consumed": True, "status": "verified"}}
+        )
+        if result.modified_count == 0:
+            raise HTTPException(status_code=410, detail="Redirect already consumed")
+    except Exception as e:
+        logger.error(f"DB error updating POST redirect: {e}")
+        raise HTTPException(status_code=500, detail="Database error")
+
+    return {"status": "success", "destination": redirect_doc["target_url"]}
 
 @app.post("/report-violation")
 async def report_violation_endpoint(
@@ -763,8 +1008,125 @@ async def report_violation_endpoint(
             )
         except Exception:
             pass
-    
+
     return {"status": "success"}
+
+@app.get("/{short_id}")
+async def original_shortlink(
+    request: Request,
+    short_id: str,
+    db = Depends(get_database)
+):
+    if short_id in ["health", "continue", "redirect", "verify", "blocked", "generate", "report-violation"]:
+        raise HTTPException(status_code=404)
+
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database disconnected")
+
+    try:
+        link = await db.protected_links.find_one({"short_id": short_id})
+    except Exception as e:
+        logger.error(f"DB error in shortlink: {e}")
+        link = None
+
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    user_id = ObjectId(link['user_id'])
+    try:
+        user = await db.users.find_one({"_id": user_id})
+    except Exception:
+        user = None
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    client_ip = get_client_ip(request)
+    user_agent = request.headers.get("user-agent", "")
+    referer = request.headers.get("referer", "")
+    original_target = link.get("original_url", DEFAULT_TARGET_URL)
+
+    is_bypass, bypass_reason = await detect_userscript_bypass(request, db)
+
+    if is_bypass:
+        try:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+        except Exception:
+            pass
+        return await handle_bypass_redirect(original_target, db)
+
+    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+
+    if shortener_base_url:
+        if not is_valid_shortener_referer(referer, shortener_base_url):
+            ref_str = referer if referer else "Missing"
+            shortener_domain = urlparse(shortener_base_url).netloc or shortener_base_url
+            reason = f"Bypass detected: Missing or invalid Referer (expected '{shortener_domain}', got '{ref_str}')"
+
+            try:
+                await db.users.update_one(
+                    {"_id": user_id},
+                    {"$inc": {"blocked_count": 1, "referer_failures": 1}}
+                )
+                await send_bypass_notification(user_id, short_id, reason, request, db)
+            except Exception:
+                pass
+            return await handle_bypass_redirect(original_target, db)
+
+    session_id = secrets.token_urlsafe(32)
+    token = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(16)
+    timestamp = time.time()
+
+    session_doc = {
+        "session_id": session_id,
+        "token": token,
+        "nonce": nonce,
+        "short_id": short_id,
+        "original_url": link["original_url"],
+        "user_id": str(user_id),
+        "client_ip": client_ip,
+        "user_agent": user_agent,
+        "created_at": timestamp,
+        "expires_at": timestamp + 300,
+        "status": "unused",
+        "verified": True,
+        "consumed": False,
+        "referer": referer,
+        "mode": link.get("mode", "NORMAL"),
+        "manual_min_seconds": link.get("manual_min_seconds"),
+        "manual_max_seconds": link.get("manual_max_seconds")
+    }
+
+    try:
+        await db.sessions.insert_one(session_doc)
+        await db.users.update_one(
+            {"_id": user_id},
+            {
+                "$inc": {"success_count": 1},
+                "$set": {
+                    "last_success": timestamp,
+                    "last_ip": client_ip,
+                    "last_user_agent": user_agent
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"DB error creating session in shortlink: {e}")
+
+    response = RedirectResponse(url=f"/continue?token={token}", status_code=302)
+    is_secure = request.url.scheme == "https"
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        secure=is_secure,
+        samesite="lax",
+        path="/",
+        max_age=120
+    )
+    return response
 
 # =====================================================
 # Health Check
