@@ -22,3 +22,22 @@ def test_root_endpoint_verification():
     )
     assert response.status_code == 200
     assert "Verifying Connection" in response.text
+    assert "session_id" in response.cookies
+
+def test_urllinkshort_referer_no_false_bypass():
+    target_b64 = "aHR0cHM6Ly90ZWxlZ3JhbS5tZS9BTklfVEVMVUdVRkxJWF9CT1Q_c3RhcnQ9dmVyaWZ5X1c1bDA2bUtUTnh5dnoza2hMS1Fqamc="
+    hash_val = "38043e8e818e3df3bf646b7a2fbcf520"
+    salt_val = "peq-9RxQJxoyzn7Lzw3vHA"
+
+    response = client.get(
+        "/verify",
+        params={"target": target_b64, "hash": hash_val, "salt": salt_val},
+        headers={
+            "User-Agent": "Mozilla/5.0 (Linux; Android 11; CUBOT KINGKONG 5) AppleWebKit/537.36",
+            "Referer": "https://web.urllinkshort.in/TcMOX",
+            "Accept": "text/html"
+        }
+    )
+    assert response.status_code == 200
+    assert "Verifying Connection" in response.text
+    assert "session_id" in response.cookies

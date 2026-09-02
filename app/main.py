@@ -8,6 +8,7 @@ import logging
 import html
 import httpx
 import asyncio
+import re
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, quote, unquote
@@ -188,16 +189,20 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
         return False, ""
     
     bot_keywords = [
-        "bot", "crawler", "spider", "headless", "phantom", "selenium",
-        "puppeteer", "playwright", "python", "curl", "wget", "go-http-client",
+        "crawler", "spider", "headless", "phantom", "selenium",
+        "puppeteer", "playwright", "python-requests", "curl", "wget", "go-http-client",
         "axios", "node-fetch", "urllib", "aiohttp", "httpx", "postman",
-        "insomnia", "bypass", "ddxbypass", "bypassbot", "checker", "scraper",
+        "insomnia", "ddxbypass", "bypassbot", "checker", "scraper",
         "tampermonkey", "greasyfork", "violentmonkey", "nicktrick"
     ]
     
     for kw in bot_keywords:
         if kw in ua_lower:
             return True, f"Automated bot/crawler User-Agent keyword '{kw}' detected"
+
+    bot_regex = re.compile(r"\bbot\b|\bbots\b|bot/|bot;|googlebot|bingbot|yandexbot|slurp", re.IGNORECASE)
+    if bot_regex.search(user_agent):
+        return True, "Automated bot User-Agent pattern detected"
     
     return False, ""
 
@@ -277,24 +282,33 @@ def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
 
 async def check_request_allowed_domain(request: Request, db = None) -> bool:
     """
-    Check if the Referer or Origin header matches an allowed domain.
+    Check if the Referer or Origin header matches an allowed domain or known shortener.
     """
     referer = request.headers.get("referer", "")
     origin = request.headers.get("origin", "")
 
+    domains_to_check = []
     if referer:
-        ref_lower = unquote(referer).lower()
-        if "antibypass" in ref_lower:
+        domains_to_check.append(unquote(referer).lower())
+    if origin:
+        domains_to_check.append(unquote(origin).lower())
+
+    for domain_str in domains_to_check:
+        if "antibypass" in domain_str or "urllinkshort" in domain_str:
             return True
-        if await is_allowed_referer(referer, db):
+        if await is_allowed_referer(domain_str, db):
             return True
 
-    if origin:
-        orig_lower = unquote(origin).lower()
-        if "antibypass" in orig_lower:
-            return True
-        if await is_allowed_referer(origin, db):
-            return True
+    if db is not None and (referer or origin):
+        ref_val = referer or origin
+        try:
+            cursor = db.protected_links.find({"shortener_base_url": {"$exists": True}})
+            async for doc in cursor:
+                s_base = doc.get("shortener_base_url")
+                if s_base and is_valid_shortener_referer(ref_val, s_base):
+                    return True
+        except Exception as e:
+            logger.warning(f"Error checking shortener_base_url in allowed domain check: {e}")
 
     return False
 
@@ -329,7 +343,6 @@ async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, s
         "smart nicktrick",
         "nicktrick redirect error",
         "top!==self",
-        "searchparams",
         "document.write",
         "document.open",
         "ddxbypass",
@@ -346,24 +359,27 @@ async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, s
         "nicktrick",
         "javascript:",
         "564048",
-        "smart nicktrick",
+        "smart_nicktrick",
         "greasyfork",
         "tampermonkey",
         "violentmonkey",
-        "stealth final",
+        "stealth_final",
         "ddxbypass",
-        "bypassbot"
+        "bypassbot",
+        "bypass_tool",
+        "bypass_script"
     ]
 
     for k, v in request.query_params.items():
         k_dec = unquote(unquote(k)).lower()
         v_dec = unquote(unquote(v)).lower()
         
-        if k_dec == "nicktrick" or "nicktrick" in k_dec or "nicktrick" in v_dec:
+        # Skip checking standard application parameters
+        if k_dec in ["target", "hash", "salt", "token", "id", "tab", "nonce", "url", "api"]:
+            continue
+
+        if "nicktrick" in k_dec or "nicktrick" in v_dec:
             return True, "NickTrick parameter detected in query string"
-        
-        if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
-            return True, "Bypass query parameter pattern detected"
 
         for kw in banned_query_keywords:
             if kw in k_dec or kw in v_dec:
@@ -601,7 +617,18 @@ async def verify_endpoint(
             .replace("{tab_token}", tab_token)
             .replace("{nonce}", gateway_nonce)
         )
-        return HTMLResponse(content=html_content, status_code=200)
+        response = HTMLResponse(content=html_content, status_code=200)
+        is_secure = request.url.scheme == "https"
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            secure=is_secure,
+            samesite="lax",
+            path="/",
+            max_age=300
+        )
+        return response
     
     return RedirectResponse(url=target_url, status_code=302)
 
@@ -771,7 +798,18 @@ async def continue_endpoint(
             .replace("{tab_token}", tab_token)
             .replace("{nonce}", gateway_nonce)
         )
-        return HTMLResponse(content=html_content, status_code=200)
+        response = HTMLResponse(content=html_content, status_code=200)
+        is_secure = request.url.scheme == "https"
+        response.set_cookie(
+            key="session_id",
+            value=cookie_session_id or session.get("session_id"),
+            httponly=True,
+            secure=is_secure,
+            samesite="lax",
+            path="/",
+            max_age=300
+        )
+        return response
     
     return RedirectResponse(url=destination_url, status_code=302)
 
@@ -836,7 +874,7 @@ async def redirect_endpoint(
     
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
-    if expected_session_id and expected_session_id != cookie_session_id:
+    if expected_session_id and cookie_session_id and expected_session_id != cookie_session_id:
         return await handle_bypass_redirect(target_url, db)
     
     expected_tab_token = redirect_doc.get("tab_token")
@@ -920,7 +958,7 @@ async def redirect_post_endpoint(
 
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
-    if expected_session_id and expected_session_id != cookie_session_id:
+    if expected_session_id and cookie_session_id and expected_session_id != cookie_session_id:
         raise HTTPException(status_code=403, detail="Session verification failed")
 
     expected_tab_token = redirect_doc.get("tab_token")
