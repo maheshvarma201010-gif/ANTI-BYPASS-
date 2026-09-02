@@ -414,7 +414,7 @@ async def handle_validation(
         verification_id = request.headers.get("X-Verification-ID", "unknown")
         
         # Get the link
-        link = await db.protected_links.find_one({"short_id": short_id})
+        link = await db.protected_links.find_one({"short_id": short_id}) if db is not None else None
         if not link:
             return JSONResponse(
                 content={"status": "error", "message": "Invalid link"},
@@ -422,7 +422,7 @@ async def handle_validation(
             )
 
         user_id = ObjectId(link['user_id'])
-        user = await db.users.find_one({"_id": user_id})
+        user = await db.users.find_one({"_id": user_id}) if db is not None else None
         if not user:
             return JSONResponse(
                 content={"status": "error", "message": "User not found"},
@@ -477,10 +477,11 @@ async def handle_validation(
                 "verification_id": verification_id
             })
             
-            await db.users.update_one(
-                {"_id": user_id},
-                {"$inc": {"token_failures": 1, "blocked_count": 1}}
-            )
+            if db is not None:
+                await db.users.update_one(
+                    {"_id": user_id},
+                    {"$inc": {"token_failures": 1, "blocked_count": 1}}
+                )
             
             return JSONResponse(
                 content={
@@ -501,10 +502,11 @@ async def handle_validation(
         referer_reason = ""
         
         # Approach 1: Direct match
-        if shortener_domain and shortener_domain in referer:
+        if shortener_domain and shortener_domain.lower() in referer.lower():
             referer_valid = True
+            referer_reason = "direct_shortener_match"
         else:
-            # Approach 2: Check if referer is a known allowed source
+            # Approach 2: Check if referer is in allowed domains list
             referer_valid = await is_allowed_referer(referer, db)
             if referer_valid:
                 referer_reason = "allowed_referer"
@@ -537,17 +539,18 @@ async def handle_validation(
                 referer_reason = "development"
         
         # Log referer validation result
-        await db.users.update_one(
-            {"_id": user_id},
-            {"$push": {
-                "referer_validation_history": {
-                    "timestamp": datetime.now(timezone.utc),
-                    "referer": referer[:100],  # Truncate for storage
-                    "valid": referer_valid,
-                    "reason": referer_reason
-                }
-            }}
-        )
+        if db is not None:
+            await db.users.update_one(
+                {"_id": user_id},
+                {"$push": {
+                    "referer_validation_history": {
+                        "timestamp": datetime.now(timezone.utc),
+                        "referer": referer[:100],
+                        "valid": referer_valid,
+                        "reason": referer_reason
+                    }
+                }}
+            )
         
         if not referer_valid:
             await log_validation_event(db, {
@@ -563,10 +566,11 @@ async def handle_validation(
                 "verification_id": verification_id
             })
             
-            await db.users.update_one(
-                {"_id": user_id},
-                {"$inc": {"referer_failures": 1, "blocked_count": 1}}
-            )
+            if db is not None:
+                await db.users.update_one(
+                    {"_id": user_id},
+                    {"$inc": {"referer_failures": 1, "blocked_count": 1}}
+                )
             
             return JSONResponse(
                 content={
@@ -580,13 +584,12 @@ async def handle_validation(
         # ============== STEP 3: FINGERPRINT VALIDATION ==============
         fingerprint = payload.get("fingerprint", {})
         if not await validate_fingerprint(fingerprint, user_id, db):
-            # Log but don't block immediately - could be false positive
-            await db.users.update_one(
-                {"_id": user_id},
-                {"$inc": {"fingerprint_warnings": 1}}
-            )
+            if db is not None:
+                await db.users.update_one(
+                    {"_id": user_id},
+                    {"$inc": {"fingerprint_warnings": 1}}
+                )
             
-            # Only block if repeated fingerprint issues
             if user_history.get("fingerprint_warnings", 0) > 3:
                 await log_validation_event(db, {
                     "short_id": short_id,
@@ -607,20 +610,19 @@ async def handle_validation(
                 )
 
         # ============== STEP 4: SUCCESS ==============
-        # Increment success count
-        await db.users.update_one(
-            {"_id": user_id},
-            {
-                "$inc": {"success_count": 1},
-                "$set": {
-                    "last_success": datetime.now(timezone.utc),
-                    "last_ip": client_ip,
-                    "last_user_agent": user_agent
+        if db is not None:
+            await db.users.update_one(
+                {"_id": user_id},
+                {
+                    "$inc": {"success_count": 1},
+                    "$set": {
+                        "last_success": datetime.now(timezone.utc),
+                        "last_ip": client_ip,
+                        "last_user_agent": user_agent
+                    }
                 }
-            }
-        )
+            )
 
-        # Log success
         await log_validation_event(db, {
             "short_id": short_id,
             "user_id": user_id,
@@ -642,8 +644,6 @@ async def handle_validation(
 
     except Exception as e:
         logger.error(f"Validation error: {str(e)}", exc_info=True)
-        
-        # Return a retry response instead of error to minimize user impact
         return JSONResponse(
             content={
                 "status": "retry",
@@ -657,6 +657,9 @@ async def handle_validation(
 
 async def get_user_verification_history(user_id: ObjectId, db) -> Dict[str, Any]:
     """Get user's verification statistics"""
+    if db is None:
+        return {"success_rate": 0, "total_attempts": 0, "fingerprint_warnings": 0}
+
     user = await db.users.find_one(
         {"_id": user_id},
         {
@@ -689,24 +692,35 @@ async def get_user_verification_history(user_id: ObjectId, db) -> Dict[str, Any]
     }
 
 async def is_allowed_referer(referer: str, db) -> bool:
-    """Check if referer is in allowed list"""
+    """Check if referer domain or host matches any allowed referer domains"""
     if not referer:
         return False
     
-    allowed = await db.allowed_referers.find_one({
-        "domain": {"$regex": re.escape(referer), "$options": "i"}
-    })
-    
-    return allowed is not None
+    parsed = urlparse(referer if "://" in referer else f"http://{referer}")
+    host = (parsed.netloc or parsed.path).lower().split(":")[0].strip()
+
+    if not host:
+        return False
+
+    if db is not None:
+        cursor = db.allowed_referers.find({})
+        async for doc in cursor:
+            allowed_domain = doc.get("domain", "").strip().lower()
+            if allowed_domain:
+                if host == allowed_domain or host.endswith(f".{allowed_domain}"):
+                    return True
+
+    return False
 
 async def is_legitimate_no_referer(ip: str, user_agent: str, user_id: ObjectId, db) -> bool:
     """Check if missing referer is legitimate"""
-    # Check IP whitelist
+    if db is None:
+        return False
+
     whitelist = await db.ip_whitelist.find_one({"ip": ip})
     if whitelist:
         return True
     
-    # Check if user has successfully verified before
     recent_success = await db.validation_events.find_one({
         "user_id": user_id,
         "status": "success",
@@ -716,10 +730,8 @@ async def is_legitimate_no_referer(ip: str, user_agent: str, user_id: ObjectId, 
     if recent_success:
         return True
     
-    # Check if user agent is from a known browser
     known_browsers = ['chrome', 'firefox', 'safari', 'edge', 'opera', 'brave', 'mobile']
     if any(browser in user_agent.lower() for browser in known_browsers):
-        # Check if this IP has had success before
         ip_success = await db.validation_events.find_one({
             "ip": ip,
             "status": "success",
@@ -739,21 +751,22 @@ async def is_related_domain(referer: str, shortener_domain: str, db) -> bool:
         parsed = urlparse(referer)
         referer_domain = parsed.netloc or parsed.path
         
-        # Check if it's a subdomain
         if referer_domain.endswith(f".{shortener_domain}"):
             return True
         
-        # Check if it's in the related domains list
-        related = await db.related_domains.find_one({
-            "domain": referer_domain
-        })
-        
-        return related is not None
+        if db is not None:
+            related = await db.related_domains.find_one({
+                "domain": referer_domain
+            })
+            return related is not None
+        return False
     except:
         return False
 
 async def is_whitelisted_user(user_id: ObjectId, db) -> bool:
     """Check if user is whitelisted"""
+    if db is None:
+        return False
     user = await db.users.find_one({
         "_id": user_id,
         "whitelisted": True
@@ -774,47 +787,47 @@ async def is_development_environment(ip: str, user_agent: str) -> bool:
 
 async def check_caching_issue(short_id: str, ip: str, db) -> bool:
     """Check if token failure might be due to caching"""
+    if db is None:
+        return False
     recent_attempts = await db.validation_events.count_documents({
         "short_id": short_id,
         "ip": ip,
         "timestamp": {"$gte": datetime.now(timezone.utc) - timedelta(seconds=30)}
     })
-    
     return recent_attempts > 0
 
 async def validate_fingerprint(fingerprint: dict, user_id: ObjectId, db) -> bool:
     """Validate client fingerprint"""
     if not fingerprint:
-        return True  # Don't block on missing fingerprint
+        return True
     
-    # Basic validation - check if required fields exist
     required_fields = ['screenResolution', 'timezone', 'language']
     for field in required_fields:
         if field not in fingerprint:
             return False
     
-    # Check if fingerprint matches previous successful attempts
-    previous = await db.validation_events.find_one({
-        "user_id": user_id,
-        "status": "success",
-        "timestamp": {"$gte": datetime.now(timezone.utc) - timedelta(hours=24)}
-    })
-    
-    if previous:
-        prev_fingerprint = previous.get("fingerprint", {})
-        # Compare major fingerprint components
-        if prev_fingerprint:
-            if prev_fingerprint.get('screenResolution') != fingerprint.get('screenResolution'):
-                return False
-            if prev_fingerprint.get('timezone') != fingerprint.get('timezone'):
-                return False
+    if db is not None:
+        previous = await db.validation_events.find_one({
+            "user_id": user_id,
+            "status": "success",
+            "timestamp": {"$gte": datetime.now(timezone.utc) - timedelta(hours=24)}
+        })
+
+        if previous:
+            prev_fingerprint = previous.get("fingerprint", {})
+            if prev_fingerprint:
+                if prev_fingerprint.get('screenResolution') != fingerprint.get('screenResolution'):
+                    return False
+                if prev_fingerprint.get('timezone') != fingerprint.get('timezone'):
+                    return False
     
     return True
 
 async def log_validation_event(db, event_data: dict):
     """Log validation events"""
+    if db is None:
+        return
     try:
-        # Ensure ObjectId is properly handled
         if 'user_id' in event_data and not isinstance(event_data['user_id'], ObjectId):
             event_data['user_id'] = ObjectId(event_data['user_id'])
         

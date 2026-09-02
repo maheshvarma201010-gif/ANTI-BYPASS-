@@ -1,36 +1,79 @@
-from typing import Optional
-from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from app.api.endpoints import router as api_router
-from app.models.database import connect_to_mongo, close_mongo_connection, get_database
-from app.core.config import settings
+import os
 import secrets
 import time
 import base64
 import hashlib
 import hmac
 import logging
-import asyncio
 import html
 import httpx
+import asyncio
+from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse, quote, unquote
+
+from fastapi import FastAPI, Request, Depends, HTTPException, Body, Query
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from bson import ObjectId
+
+from app.api.endpoints import router as api_router
+from app.models.database import connect_to_mongo, close_mongo_connection, get_database
+from app.core.config import settings
+from app.core.referer import is_allowed_referer
 
 app = FastAPI(title=settings.PROJECT_NAME)
 app.include_router(api_router)
 
-# SECRET KEY for HMAC - Must be in environment variables
+# SECRET KEY for HMAC
 SECRET_KEY = settings.SECRET_KEY or "change-this-to-a-strong-secret-key-min-32-chars"
+
+DEFAULT_BYPASS_BASE_URL = "https://empty-workers-playground.rolexoriginalstg.workers.dev/verify"
+DEFAULT_TARGET_URL = "https://telegram.me/ANI_TELUGUFLIX_BOT?start=verify_W5l06mKTNxyvz3khLKQjjg"
 
 logger = logging.getLogger(__name__)
 
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+def load_template(filename: str) -> str:
+    file_path = TEMPLATES_DIR / filename
+    if file_path.exists():
+        return file_path.read_text(encoding="utf-8")
+    return ""
+
 @app.on_event("startup")
 async def startup_db_client():
-    await connect_to_mongo()
+    try:
+        await connect_to_mongo()
+    except Exception as e:
+        logger.error(f"MongoDB startup connection error: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    await close_mongo_connection()
+    try:
+        await close_mongo_connection()
+    except Exception as e:
+        logger.error(f"MongoDB shutdown error: {e}")
+
+# =====================================================
+# Bypass URL Helper Functions
+# =====================================================
+
+async def get_bypass_url(target_url: str = DEFAULT_TARGET_URL, db = None) -> str:
+    """
+    Generate or fetch the bypass redirect URL with target parameter and hash.
+    """
+    bypass_base = DEFAULT_BYPASS_BASE_URL
+    if db is not None:
+        try:
+            cfg = await db.settings.find_one({"key": "bypass_redirect_url"})
+            if cfg and isinstance(cfg.get("url"), str) and cfg["url"].strip():
+                bypass_base = cfg["url"].strip()
+        except Exception as e:
+            logger.warning(f"Error reading bypass_redirect_url from DB: {e}")
+
+    encoded_target = base64.b64encode(target_url.encode("utf-8")).decode("utf-8")
+    hash_val = hashlib.md5(target_url.encode("utf-8")).hexdigest()[:16]
+    return f"{bypass_base}?target={encoded_target}&hash={hash_val}"
 
 # =====================================================
 # HMAC-MD5 URL Structure Functions
@@ -42,9 +85,8 @@ def generate_hmac_hash(target_url: str, salt: Optional[str] = None) -> tuple[str
     Returns: (hash_value, salt)
     """
     if not salt:
-        salt = secrets.token_urlsafe(16)  # 16 bytes = 22 characters
+        salt = secrets.token_urlsafe(16)
     
-    # HMAC-MD5: HMAC(secret_key, target_url + ":" + salt)
     message = f"{target_url}:{salt}".encode('utf-8')
     hash_obj = hmac.new(
         SECRET_KEY.encode('utf-8'),
@@ -71,52 +113,56 @@ def create_secure_url(target_url: str, base_url: str = None) -> str:
         base_url = f"{settings.BASE_URL}/verify"
     
     base_url = base_url.split("?")[0].rstrip("/")
-    
-    # Generate HMAC hash with salt
     hash_value, salt = generate_hmac_hash(target_url)
-    
-    # Base64URL encode target
     target_b64 = base64.urlsafe_b64encode(target_url.encode('utf-8')).decode('utf-8')
-    
-    # Build URL with all three parameters
     return f"{base_url}?target={target_b64}&hash={hash_value}&salt={salt}"
 
 def decode_target(encoded_target: str) -> Optional[str]:
     """
-    Decode base64url encoded target URL
+    Decode base64/urlsafe base64 target URL cleanly.
+    Handles unquoting, URL-safe and standard base64 variants.
     """
-    try:
-        # Add padding if necessary
-        padding = 4 - (len(encoded_target) % 4)
-        if padding != 4:
-            encoded_target += '=' * padding
-        
-        return base64.urlsafe_b64decode(encoded_target).decode('utf-8')
-    except Exception:
+    if not encoded_target:
         return None
+    try:
+        s = unquote(unquote(encoded_target)).strip()
+        if s.startswith("http://") or s.startswith("https://"):
+            return s
 
-def validate_secure_url(target_b64: str, hash_value: str, salt: str) -> tuple[bool, Optional[str]]:
+        padding = 4 - (len(s) % 4)
+        if padding != 4:
+            s += '=' * padding
+        
+        try:
+            decoded = base64.urlsafe_b64decode(s).decode('utf-8', errors='ignore')
+            if decoded.startswith("http://") or decoded.startswith("https://"):
+                return decoded
+        except Exception:
+            pass
+
+        decoded = base64.b64decode(s).decode('utf-8', errors='ignore')
+        if decoded.startswith("http://") or decoded.startswith("https://"):
+            return decoded
+    except Exception:
+        pass
+    return None
+
+def validate_secure_url(target_b64: str, hash_value: Optional[str] = None, salt: Optional[str] = None) -> tuple[bool, Optional[str]]:
     """
-    Validate complete secure URL structure
-    Returns: (is_valid, decoded_target_url)
+    Validate secure URL structure and decode target.
     """
-    # Check if all parameters exist
-    if not all([target_b64, hash_value, salt]):
-        return False, None
-    
-    # Decode target
     target_url = decode_target(target_b64)
     if not target_url:
         return False, None
     
-    # Verify HMAC hash
-    if not verify_hmac_hash(target_url, hash_value, salt):
-        return False, None
+    if hash_value and salt:
+        if verify_hmac_hash(target_url, hash_value, salt):
+            return True, target_url
     
     return True, target_url
 
 # =====================================================
-# Helper Functions
+# Referer and Origin Helper Functions
 # =====================================================
 
 def get_client_ip(request: Request) -> str:
@@ -155,28 +201,160 @@ def is_bot_user_agent(user_agent: str) -> tuple[bool, str]:
     
     return False, ""
 
-def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
-    from urllib.parse import unquote
-    
+def check_referer_root(ref_netloc: str, shortener_domain: str) -> bool:
+    """
+    Compares the registrable "root" domain name of the incoming Referer/Origin
+    against the configured shortener domain, tolerant of subdomains.
+    """
+    if not ref_netloc or not shortener_domain:
+        return False
+
+    def get_root_name(domain: str) -> str:
+        domain = domain.split(":")[0]
+        parts = [p for p in domain.split(".") if p]
+
+        common_tlds = {
+            "com", "co", "net", "org", "info", "io", "in", "xyz",
+            "biz", "us", "uk", "cc", "me", "top", "online", "site",
+            "live", "club", "tech", "work"
+        }
+
+        while len(parts) > 1 and parts[-1] in common_tlds:
+            parts = parts[:-1]
+
+        if not parts:
+            return domain
+
+        return parts[-1]
+
+    shortener_root = get_root_name(shortener_domain).lower()
+    ref_root = get_root_name(ref_netloc).lower()
+
+    if not shortener_root or not ref_root:
+        return False
+
+    if shortener_root == ref_root:
+        return True
+
+    if shortener_root in ref_root or ref_root in shortener_root:
+        return True
+
+    return False
+
+def is_valid_shortener_referer(referer: str, shortener_base_url: str) -> bool:
+    if not shortener_base_url:
+        return True
+
+    if not referer:
+        return False
+
+    ref_clean = unquote(referer).strip()
+    shortener_clean = unquote(shortener_base_url).strip()
+
+    try:
+        ref_parsed = urlparse(ref_clean if "://" in ref_clean else f"http://{ref_clean}")
+        short_parsed = urlparse(shortener_clean if "://" in shortener_clean else f"http://{shortener_clean}")
+
+        ref_netloc = ref_parsed.netloc.lower().split(":")[0]
+        short_netloc = short_parsed.netloc.lower().split(":")[0]
+
+        if not ref_netloc or not short_netloc:
+            return False
+
+        if ref_netloc == short_netloc:
+            return True
+        if ref_netloc.endswith("." + short_netloc) or short_netloc.endswith("." + ref_netloc):
+            return True
+        if short_netloc in ref_netloc or ref_netloc in short_netloc:
+            return True
+
+        if check_referer_root(ref_netloc, short_netloc):
+            return True
+
+        return False
+    except Exception:
+        return False
+
+async def check_request_allowed_domain(request: Request, db = None) -> bool:
+    """
+    Check if the Referer or Origin header matches an allowed domain.
+    """
+    referer = request.headers.get("referer", "")
+    origin = request.headers.get("origin", "")
+
+    if referer:
+        ref_lower = unquote(referer).lower()
+        if "antibypass" in ref_lower:
+            return True
+        if await is_allowed_referer(referer, db):
+            return True
+
+    if origin:
+        orig_lower = unquote(origin).lower()
+        if "antibypass" in orig_lower:
+            return True
+        if await is_allowed_referer(origin, db):
+            return True
+
+    return False
+
+async def detect_userscript_bypass(request: Request, db = None) -> tuple[bool, str]:
     raw_referer = request.headers.get("referer", "")
     referer_dec = unquote(unquote(raw_referer)).lower()
     
     raw_url = str(request.url)
     url_dec = unquote(unquote(raw_url)).lower()
-    
-    # Banned keywords
+
+    if raw_referer:
+        try:
+            ref_parsed = urlparse(raw_referer)
+            ref_path = ref_parsed.path.lower()
+            if "/blocked" in ref_path:
+                return True, "Self-referential bypass attempt from internal gateway route detected in Referer"
+        except Exception:
+            pass
+
+    # If user request comes from an allowed domain (Referer or Origin), skip false-positive checks
+    if await check_request_allowed_domain(request, db):
+        return False, ""
+
     banned_keywords = [
-        "nicktrick", "javascript:", "564048", "greasyfork", "tampermonkey",
-        "violentmonkey", "stealth final", "smart nicktrick", "ddxbypass", "bypassbot"
+        "nicktrick",
+        "javascript:",
+        "564048",
+        "greasyfork",
+        "tampermonkey",
+        "violentmonkey",
+        "stealth final",
+        "smart nicktrick",
+        "nicktrick redirect error",
+        "top!==self",
+        "searchparams",
+        "document.write",
+        "document.open",
+        "ddxbypass",
+        "bypassbot"
     ]
-    
+
     for kw in banned_keywords:
         if kw in referer_dec:
             return True, f"Banned userscript pattern '{kw}' detected in Referer"
         if kw in url_dec:
             return True, f"Banned userscript pattern '{kw}' detected in Request URL"
     
-    # Check query parameters
+    banned_query_keywords = [
+        "nicktrick",
+        "javascript:",
+        "564048",
+        "smart nicktrick",
+        "greasyfork",
+        "tampermonkey",
+        "violentmonkey",
+        "stealth final",
+        "ddxbypass",
+        "bypassbot"
+    ]
+
     for k, v in request.query_params.items():
         k_dec = unquote(unquote(k)).lower()
         v_dec = unquote(unquote(v)).lower()
@@ -186,8 +364,11 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
         
         if ("bypass" in k_dec or "bypass" in v_dec) and ("anti-bypass" not in k_dec and "anti-bypass" not in v_dec):
             return True, "Bypass query parameter pattern detected"
+
+        for kw in banned_query_keywords:
+            if kw in k_dec or kw in v_dec:
+                return True, f"Banned userscript pattern '{kw}' detected in query parameters"
     
-    # Bot User-Agent detection
     user_agent = request.headers.get("user-agent", "")
     is_bot, bot_reason = is_bot_user_agent(user_agent)
     if is_bot:
@@ -196,6 +377,8 @@ def detect_userscript_bypass(request: Request) -> tuple[bool, str]:
     return False, ""
 
 async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str, request: Request, db):
+    if db is None:
+        return
     try:
         user = await db.users.find_one({"_id": user_id})
         if not user or not user.get("telegram_id"):
@@ -239,548 +422,38 @@ async def send_bypass_notification(user_id: ObjectId, short_id: str, reason: str
             "parse_mode": "HTML"
         }
         
-        async with httpx.AsyncClient() as client:
-            await client.post(url, json=payload, timeout=5.0)
+        for attempt in range(4):
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(url, json=payload, timeout=5.0)
+                    if resp.status_code == 200:
+                        return
+            except Exception as exc:
+                logger.warning(f"Telegram post exception on attempt {attempt + 1}: {exc}")
+
+            if attempt < 3:
+                await asyncio.sleep(2 ** attempt)
+
     except Exception as e:
         logger.error(f"Failed to send Telegram notification: {e}")
 
 def bypass_detected_response():
     """Return the bypass detected HTML page with 403 status code"""
-    return HTMLResponse(content=BYPASS_DETECTED_TEMPLATE, status_code=403)
+    content = load_template("bypass_detected.html")
+    return HTMLResponse(content=content, status_code=403)
+
+async def handle_bypass_redirect(target_url: str = DEFAULT_TARGET_URL, db = None):
+    """
+    Return a redirect to the configured bypass URL.
+    """
+    url = await get_bypass_url(target_url, db)
+    return RedirectResponse(url=url, status_code=302)
 
 # =====================================================
-# Templates
+# Main Endpoints
 # =====================================================
 
-BYPASS_DETECTED_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#03000a">
-    <meta name="robots" content="noindex, nofollow, noarchive">
-    <title>Security Sandboxed</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            min-height: 100vh;
-            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            color: #ffffff;
-            background: radial-gradient(circle at 50% -20%, rgba(239, 68, 68, 0.25), transparent 50%),
-                        radial-gradient(circle at 80% 80%, rgba(245, 158, 11, 0.15), transparent 40%),
-                        radial-gradient(circle at 10% 90%, rgba(30, 58, 138, 0.35), transparent 45%),
-                        #030712;
-            overflow-x: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-        }
-        .grid-bg {
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            background-image: linear-gradient(rgba(255,255,255,0.01) 1px, transparent 1px),
-                              linear-gradient(90deg, rgba(255,255,255,0.01) 1px, transparent 1px);
-            background-size: 40px 40px;
-            mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
-            z-index: 0;
-        }
-        main {
-            width: 100%;
-            max-width: 480px;
-            position: relative;
-            z-index: 10;
-        }
-        .premium-card {
-            background: linear-gradient(135deg, rgba(20,10,10,0.85) 0%, rgba(5,2,3,0.98) 100%);
-            border: 1px solid rgba(239,68,68,0.3);
-            box-shadow: 0 40px 100px -30px rgba(0,0,0,0.95), 0 0 60px -10px rgba(239,68,68,0.2);
-            backdrop-filter: blur(30px);
-            border-radius: 32px;
-            padding: 56px 48px;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-        .card-glow {
-            position: absolute;
-            top: 0;
-            left: 10%;
-            width: 80%;
-            height: 3px;
-            background: linear-gradient(90deg, transparent, rgba(239,68,68,0.8), transparent);
-            box-shadow: 0 0 25px rgba(239,68,68,0.6);
-        }
-        .shimmer {
-            font-size: 26px;
-            font-weight: 800;
-            margin: 0 0 16px 0;
-            background: linear-gradient(90deg, #ef4444, #f87171, #ef4444);
-            background-size: 200% auto;
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: shine 3s linear infinite;
-        }
-        @keyframes shine { to { background-position: 200% center; } }
-        .shield-container {
-            width: 100px;
-            height: 100px;
-            margin: 0 auto 28px auto;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(239,68,68,0.15) 0%, rgba(239,68,68,0.02) 100%);
-            border: 1px solid rgba(239,68,68,0.35);
-        }
-        .shield-svg {
-            width: 44px;
-            height: 44px;
-            fill: #ef4444;
-            filter: drop-shadow(0 0 12px rgba(239,68,68,0.6));
-        }
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: rgba(239,68,68,0.1);
-            border: 1px solid rgba(239,68,68,0.25);
-            padding: 8px 18px;
-            border-radius: 100px;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: #f87171;
-            margin-bottom: 32px;
-        }
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #ef4444;
-            box-shadow: 0 0 10px #ef4444;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.25); opacity: 0.4; }
-        }
-        .desc-text {
-            color: #e4e4e7;
-            font-size: 16px;
-            line-height: 1.6;
-            margin: 0 0 32px 0;
-            font-weight: 500;
-        }
-        .footer-line {
-            border-top: 1px solid rgba(63,63,70,0.4);
-            padding-top: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.2em;
-            color: #71717a;
-        }
-        .lock-svg {
-            width: 14px;
-            height: 14px;
-            fill: #71717a;
-        }
-        .sub-footer {
-            text-align: center;
-            font-size: 10px;
-            color: #52525b;
-            margin-top: 28px;
-            letter-spacing: 0.05em;
-        }
-    </style>
-</head>
-<body>
-    <div class="grid-bg"></div>
-    <main>
-        <section class="premium-card">
-            <div class="card-glow"></div>
-            <div>
-                <div class="status-badge">
-                    <span class="status-dot"></span>
-                    Bypass Intercepted
-                </div>
-            </div>
-            <div class="shield-container">
-                <svg class="shield-svg" viewBox="0 0 24 24">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-                </svg>
-            </div>
-            <h1 class="shimmer"><b><i>Bypass Tools Detected!</i></b></h1>
-            <p class="desc-text"><b><i>Bypass tools detected and access blocked now!</i></b></p>
-            <div class="footer-line">
-                <svg class="lock-svg" viewBox="0 0 24 24">
-                    <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
-                </svg>
-                Lordly Redirection Shield
-            </div>
-        </section>
-        <p class="sub-footer">Bypass attempts are automatically neutralized.</p>
-    </main>
-</body>
-</html>
-"""
-
-GATEWAY_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#03000a">
-    <title>Securing Connection...</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            min-height: 100vh;
-            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            color: #ffffff;
-            background: radial-gradient(circle at 50% -20%, rgba(59,130,246,0.25), transparent 50%),
-                        radial-gradient(circle at 80% 80%, rgba(245,158,11,0.12), transparent 40%),
-                        radial-gradient(circle at 10% 90%, rgba(30,58,138,0.35), transparent 45%),
-                        #030712;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-        }
-        .grid-bg {
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            background-image: linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
-                              linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
-            background-size: 50px 50px;
-            mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
-            z-index: 0;
-        }
-        main {
-            width: 100%;
-            max-width: 480px;
-            position: relative;
-            z-index: 10;
-        }
-        .premium-card {
-            background: linear-gradient(135deg, rgba(10,14,26,0.85) 0%, rgba(3,5,14,0.98) 100%);
-            border: 1px solid rgba(59,130,246,0.3);
-            box-shadow: 0 40px 100px -30px rgba(0,0,0,0.95), 0 0 50px -10px rgba(59,130,246,0.2);
-            backdrop-filter: blur(35px);
-            border-radius: 32px;
-            padding: 56px 48px;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-        .premium-card.error-state {
-            border-color: rgba(239,68,68,0.45);
-            box-shadow: 0 40px 100px -30px rgba(0,0,0,0.95), 0 0 65px -10px rgba(239,68,68,0.3);
-        }
-        .card-glow {
-            position: absolute;
-            top: 0;
-            left: 10%;
-            width: 80%;
-            height: 3px;
-            background: linear-gradient(90deg, transparent, rgba(59,130,246,0.8), transparent);
-            box-shadow: 0 0 25px rgba(59,130,246,0.6);
-        }
-        .premium-card.error-state .card-glow {
-            background: linear-gradient(90deg, transparent, rgba(239,68,68,0.8), transparent);
-            box-shadow: 0 0 25px rgba(239,68,68,0.6);
-        }
-        .shimmer {
-            font-size: 26px;
-            font-weight: 800;
-            margin: 0 0 16px 0;
-            background: linear-gradient(90deg, #3b82f6, #93c5fd, #3b82f6);
-            background-size: 200% auto;
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: shine 3s linear infinite;
-        }
-        .premium-card.error-state .shimmer {
-            background: linear-gradient(90deg, #ef4444, #fca5a5, #ef4444);
-            background-size: 200% auto;
-        }
-        @keyframes shine { to { background-position: 200% center; } }
-        .scanner-container {
-            position: relative;
-            width: 100px;
-            height: 100px;
-            margin: 0 auto 24px auto;
-        }
-        .outer-ring {
-            position: absolute;
-            inset: 0;
-            border-radius: 50%;
-            border: 2px solid rgba(59,130,246,0.1);
-            border-top-color: #3b82f6;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .inner-shield {
-            position: absolute;
-            inset: 12px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(59,130,246,0.1) 0%, rgba(59,130,246,0.02) 100%);
-            border: 1px solid rgba(59,130,246,0.2);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .shield-svg {
-            width: 32px;
-            height: 32px;
-            fill: #3b82f6;
-            filter: drop-shadow(0 0 10px rgba(59,130,246,0.4));
-        }
-        .premium-card.error-state .shield-svg {
-            fill: #ef4444;
-            filter: drop-shadow(0 0 10px rgba(220,38,38,0.4));
-        }
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: rgba(59,130,246,0.08);
-            border: 1px solid rgba(59,130,246,0.15);
-            padding: 6px 14px;
-            border-radius: 100px;
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: #60a5fa;
-            margin-bottom: 32px;
-        }
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: #3b82f6;
-            box-shadow: 0 0 8px #3b82f6;
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.2); opacity: 0.5; }
-        }
-        .desc-text {
-            color: #a1a1aa;
-            font-size: 15px;
-            line-height: 1.6;
-            margin: 0 0 32px 0;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 4px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 100px;
-            overflow: hidden;
-            border: 1px solid rgba(255,255,255,0.05);
-            margin-bottom: 12px;
-        }
-        .progress-fill {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, #3b82f6, #60a5fa);
-            box-shadow: 0 0 10px rgba(59,130,246,0.5);
-            border-radius: 100px;
-        }
-        .status-info {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.22em;
-            color: #71717a;
-            font-weight: 600;
-            margin: 0;
-        }
-        .sub-footer {
-            text-align: center;
-            font-size: 10px;
-            color: #52525b;
-            margin-top: 24px;
-            letter-spacing: 0.05em;
-        }
-    </style>
-</head>
-<body>
-    <div class="grid-bg"></div>
-    <main>
-        <section class="premium-card" id="card-element">
-            <div class="card-glow"></div>
-            <div id="badge-container">
-                <div class="status-badge" id="badge-element">
-                    <span class="status-dot" id="dot-element"></span>
-                    <span id="badge-text">Securing Redirect</span>
-                </div>
-            </div>
-            <div class="scanner-container" id="visual-container">
-                <div class="outer-ring" id="ring-element"></div>
-                <div class="inner-shield">
-                    <svg class="shield-svg" id="icon-element" viewBox="0 0 24 24">
-                        <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
-                    </svg>
-                </div>
-            </div>
-            <h1 class="shimmer" id="title-element">Verifying Connection</h1>
-            <p class="desc-text" id="desc-element">Please wait while we confirm your browser integrity and establish a secure, private redirection path...</p>
-            <div class="progress-bar" id="progress-container">
-                <div class="progress-fill" id="fill-element"></div>
-            </div>
-            <p class="status-info" id="status-text">Initializing checks...</p>
-        </section>
-        <p class="sub-footer">Redirection protected by Security Sandbox.</p>
-    </main>
-    <script>
-        (function() {
-            const nativeReplace = window.location.replace.bind(window.location);
-            const nativeDefineProperty = Object.defineProperty;
-            const nativeGetElementById = document.getElementById.bind(document);
-            
-            if (document.currentScript) {
-                try { document.currentScript.remove(); } catch(e) {}
-            }
-            
-            try {
-                const url = new URL(window.location.href);
-                const token = url.searchParams.get("token");
-                let newSearch = "";
-                if (token) {
-                    newSearch = "?token=" + encodeURIComponent(token);
-                }
-                if (url.hash || url.search !== newSearch) {
-                    window.history.replaceState(null, "", window.location.pathname + newSearch);
-                }
-            } catch(e) {}
-            
-            const REDIRECT_ID = "{redirect_id}";
-            const TAB_TOKEN = "{tab_token}";
-            const NONCE = "{nonce}";
-            let tamperingDetected = false;
-            
-            function showError(title, message) {
-                tamperingDetected = true;
-                const card = nativeGetElementById("card-element");
-                if (card) card.classList.add("error-state");
-                
-                const badge = nativeGetElementById("badge-element");
-                if (badge) {
-                    badge.style.background = "rgba(220,38,38,0.08)";
-                    badge.style.borderColor = "rgba(220,38,38,0.2)";
-                    badge.style.color = "#f87171";
-                }
-                const dot = nativeGetElementById("dot-element");
-                if (dot) {
-                    dot.style.background = "#ef4444";
-                    dot.style.boxShadow = "0 0 8px #ef4444";
-                }
-                const badgeText = nativeGetElementById("badge-text");
-                if (badgeText) badgeText.innerText = "Redirection Blocked";
-                const icon = nativeGetElementById("icon-element");
-                if (icon) {
-                    icon.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>';
-                }
-                const ring = nativeGetElementById("ring-element");
-                if (ring) {
-                    ring.style.borderTopColor = "#ef4444";
-                    ring.style.animationPlayState = "paused";
-                }
-                const titleEl = nativeGetElementById("title-element");
-                if (titleEl) titleEl.innerText = title;
-                const descEl = nativeGetElementById("desc-element");
-                if (descEl) descEl.innerText = message;
-                const progressContainer = nativeGetElementById("progress-container");
-                if (progressContainer) progressContainer.style.display = "none";
-                const statusText = nativeGetElementById("status-text");
-                if (statusText) statusText.style.display = "none";
-            }
-            
-            function reportViolation(reason) {
-                try {
-                    fetch("/report-violation", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: REDIRECT_ID, reason: reason })
-                    });
-                } catch(e) {}
-            }
-            
-            try {
-                const onTamperAttempt = function() {
-                    if (!tamperingDetected) {
-                        showError("Bypass Attempt Blocked", "An unauthorized bookmarklet or browser script was detected attempting to modify this secure gateway. Redirection is permanently revoked.");
-                    }
-                    throw new Error("Security Sandbox: Document write/open is prohibited.");
-                };
-                nativeDefineProperty(document, 'open', { value: onTamperAttempt, writable: false, configurable: false });
-                nativeDefineProperty(document, 'write', { value: onTamperAttempt, writable: false, configurable: false });
-                nativeDefineProperty(document, 'writeln', { value: onTamperAttempt, writable: false, configurable: false });
-            } catch(e) {}
-            
-            try {
-                const storageKey = 'tab_token_' + REDIRECT_ID;
-                if (!sessionStorage.getItem(storageKey)) {
-                    sessionStorage.setItem(storageKey, TAB_TOKEN);
-                } else if (sessionStorage.getItem(storageKey) !== TAB_TOKEN) {
-                    reportViolation("Tab context token mismatch in sessionStorage");
-                    showError("Tab Security Violation", "Security violation: Redirection can only be completed in the exact same browser tab where the session started.");
-                    return;
-                }
-            } catch(e) {}
-            
-            function detectUserscriptGlobals() {
-                return (typeof GM_info !== 'undefined') ||
-                       (typeof GM !== 'undefined') ||
-                       (window.GM_info) ||
-                       (window.GM_xmlhttpRequest) ||
-                       (window.GM) ||
-                       (window.unsafeWindow && window.unsafeWindow !== window) ||
-                       (typeof GM_setValue !== 'undefined') ||
-                       (typeof GM_getValue !== 'undefined') ||
-                       (typeof GM_registerMenuCommand !== 'undefined');
-            }
-            
-            if (detectUserscriptGlobals()) {
-                showError("Script Injection Detected", "An unauthorized script manager or browser extension was detected modifying the environment. Access has been restricted to protect link integrity.");
-                return;
-            }
-            
-            try {
-                if (!tamperingDetected) {
-                    const storedTabToken = sessionStorage.getItem('tab_token_' + REDIRECT_ID) || TAB_TOKEN;
-                    nativeReplace("/redirect?id=" + REDIRECT_ID + "&tab=" + encodeURIComponent(storedTabToken) + "&nonce=" + encodeURIComponent(NONCE));
-                }
-            } catch (e) {
-                showError("Verification Failure", "Redirection failed. Please reload the page.");
-            }
-        })();
-    </script>
-</body>
-</html>
-"""
-
-# =====================================================
-# Main Endpoints with target/hash/salt URL Structure
-# =====================================================
-
+@app.get("/")
 @app.get("/verify")
 async def verify_endpoint(
     request: Request,
@@ -791,41 +464,60 @@ async def verify_endpoint(
 ):
     """
     Main verification endpoint with URL structure:
-    /verify?target={base64_url}&hash={hmac_md5}&salt={salt}
+    /?target={base64_url}&hash={hmac_md5}&salt={salt} or /verify?target=...
     """
+    if not target:
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
     
-    # Validate the secure URL
     is_valid, target_url = validate_secure_url(target, hash, salt)
+    if not is_valid or not target_url:
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
     
-    if not is_valid:
-        # Invalid URL - show bypass detected page
-        return bypass_detected_response()
-    
-    # Check for bypass tools
-    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    is_bypass, bypass_reason = await detect_userscript_bypass(request, db)
     if is_bypass:
-        # Check if this is a valid link from database
-        link = await db.protected_links.find_one({"original_url": target_url})
-        if link:
-            user_id = ObjectId(link['user_id'])
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, link.get("short_id", "unknown"), 
-                                          f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        return bypass_detected_response()
+        if db is not None:
+            try:
+                link = await db.protected_links.find_one({"original_url": target_url})
+                if link and "user_id" in link:
+                    user_id = ObjectId(link['user_id'])
+                    await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                    await send_bypass_notification(user_id, link.get("short_id", "unknown"),
+                                                  f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+            except Exception as e:
+                logger.error(f"DB error during bypass check: {e}")
+        return await handle_bypass_redirect(target_url, db)
     
-    # Check if target URL exists in database
-    link = await db.protected_links.find_one({"original_url": target_url})
-    if not link:
-        # URL not found in database
-        return bypass_detected_response()
-    
-    # Get user info
-    user_id = ObjectId(link['user_id'])
-    user = await db.users.find_one({"_id": user_id})
-    if not user:
-        return bypass_detected_response()
-    
-    # Create verification session
+    user_id = None
+    short_id = "unknown"
+    mode = "NORMAL"
+    manual_min_seconds = None
+    manual_max_seconds = None
+
+    if db is not None:
+        try:
+            link = await db.protected_links.find_one({"original_url": target_url})
+            if link:
+                user_id = ObjectId(link['user_id']) if link.get('user_id') else None
+                short_id = link.get("short_id", "unknown")
+                mode = link.get("mode", "NORMAL")
+                manual_min_seconds = link.get("manual_min_seconds")
+                manual_max_seconds = link.get("manual_max_seconds")
+
+                if user_id:
+                    await db.users.update_one(
+                        {"_id": user_id},
+                        {
+                            "$inc": {"success_count": 1},
+                            "$set": {
+                                "last_success": time.time(),
+                                "last_ip": get_client_ip(request),
+                                "last_user_agent": request.headers.get("user-agent", "")
+                            }
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"DB error fetching link info: {e}")
+
     session_id = secrets.token_urlsafe(32)
     token = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(16)
@@ -838,9 +530,9 @@ async def verify_endpoint(
         "session_id": session_id,
         "token": token,
         "nonce": nonce,
-        "short_id": link.get("short_id", "unknown"),
+        "short_id": short_id,
         "original_url": target_url,
-        "user_id": str(user_id),
+        "user_id": str(user_id) if user_id else None,
         "client_ip": client_ip,
         "user_agent": user_agent,
         "created_at": timestamp,
@@ -849,36 +541,25 @@ async def verify_endpoint(
         "verified": True,
         "consumed": False,
         "referer": referer,
-        "mode": link.get("mode", "NORMAL"),
-        "manual_min_seconds": link.get("manual_min_seconds"),
-        "manual_max_seconds": link.get("manual_max_seconds"),
+        "mode": mode,
+        "manual_min_seconds": manual_min_seconds,
+        "manual_max_seconds": manual_max_seconds,
         "target_param": target,
         "hash_param": hash,
         "salt_param": salt
     }
     
-    await db.sessions.insert_one(session_doc)
+    if db is not None:
+        try:
+            await db.sessions.insert_one(session_doc)
+        except Exception as e:
+            logger.error(f"DB error inserting session: {e}")
     
-    # Update user statistics
-    await db.users.update_one(
-        {"_id": user_id},
-        {
-            "$inc": {"success_count": 1},
-            "$set": {
-                "last_success": timestamp,
-                "last_ip": client_ip,
-                "last_user_agent": user_agent
-            }
-        }
-    )
-    
-    # Check if browser request
     accept_header = request.headers.get("accept", "").lower()
     user_agent_lower = user_agent.lower()
     is_browser = "text/html" in accept_header and "test-agent" not in user_agent_lower and "pytest" not in user_agent_lower
     
     if is_browser:
-        # Create redirect mapping for gateway
         redirect_id = secrets.token_urlsafe(8)
         salt_hash = secrets.token_urlsafe(16)
         tab_token = secrets.token_urlsafe(16)
@@ -887,38 +568,65 @@ async def verify_endpoint(
         session_hash_input = f"{client_ip}:{user_agent}:{salt_hash}"
         session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()
         
-        await db.redirects.insert_one({
-            "redirect_id": redirect_id,
-            "target_url": target_url,
-            "created_at": timestamp,
-            "expires_at": timestamp + 120,
-            "consumed": False,
-            "status": "unused",
-            "client_ip": client_ip,
-            "session_hash": session_hash,
-            "salt": salt_hash,
-            "user_agent": user_agent,
-            "session_id": session_id,
-            "tab_token": tab_token,
-            "nonce": gateway_nonce,
-            "user_id": str(user_id),
-            "short_id": link.get("short_id", "unknown"),
-            "mode": link.get("mode", "NORMAL"),
-            "manual_min_seconds": link.get("manual_min_seconds"),
-            "manual_max_seconds": link.get("manual_max_seconds"),
-            "session_start_time": timestamp
-        })
+        if db is not None:
+            try:
+                await db.redirects.insert_one({
+                    "redirect_id": redirect_id,
+                    "target_url": target_url,
+                    "created_at": timestamp,
+                    "expires_at": timestamp + 120,
+                    "consumed": False,
+                    "status": "unused",
+                    "client_ip": client_ip,
+                    "session_hash": session_hash,
+                    "salt": salt_hash,
+                    "user_agent": user_agent,
+                    "session_id": session_id,
+                    "tab_token": tab_token,
+                    "nonce": gateway_nonce,
+                    "user_id": str(user_id) if user_id else None,
+                    "short_id": short_id,
+                    "mode": mode,
+                    "manual_min_seconds": manual_min_seconds,
+                    "manual_max_seconds": manual_max_seconds,
+                    "session_start_time": timestamp
+                })
+            except Exception as e:
+                logger.error(f"DB error inserting redirect: {e}")
         
+        gateway_template = load_template("gateway.html")
         html_content = (
-            GATEWAY_TEMPLATE
+            gateway_template
             .replace("{redirect_id}", redirect_id)
             .replace("{tab_token}", tab_token)
             .replace("{nonce}", gateway_nonce)
         )
         return HTMLResponse(content=html_content, status_code=200)
     
-    # Redirect to final destination
     return RedirectResponse(url=target_url, status_code=302)
+
+@app.get("/blocked")
+async def blocked_page(
+    request: Request,
+    db = Depends(get_database)
+):
+    token = request.query_params.get("token")
+
+    if token and db is not None:
+        try:
+            session = await db.sessions.find_one({"token": token})
+            if session and session.get("user_id"):
+                user_id = ObjectId(session["user_id"])
+                s_id = session.get("short_id", "unknown")
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, s_id, "Copied Bypass URL / Telegram Link Scraper Intercepted", request, db)
+                await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+        except Exception as e:
+            logger.error(f"DB error in /blocked: {e}")
+
+    if request.query_params:
+        return RedirectResponse(url="/blocked", status_code=302)
+    return bypass_detected_response()
 
 @app.get("/continue")
 async def continue_endpoint(
@@ -927,72 +635,97 @@ async def continue_endpoint(
     db = Depends(get_database)
 ):
     """Continue endpoint for session verification"""
-    session = await db.sessions.find_one({"token": token})
-    
+    if db is None:
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
+
+    try:
+        session = await db.sessions.find_one({"token": token})
+    except Exception as e:
+        logger.error(f"DB error in continue: {e}")
+        session = None
+
     if session is not None and not isinstance(session, dict):
         session = None
     
     if not session:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
     
     user_id_str = session.get("user_id")
     user_id = ObjectId(user_id_str) if user_id_str else None
     short_id = session.get("short_id", "unknown")
+    destination_url = session.get("original_url", DEFAULT_TARGET_URL)
     
-    # Check for bypass tools
-    is_bypass, bypass_reason = detect_userscript_bypass(request)
+    is_bypass, bypass_reason = await detect_userscript_bypass(request, db)
     if is_bypass:
         if user_id:
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
-        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
-        return bypass_detected_response()
+            try:
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+            except Exception:
+                pass
+        try:
+            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True}})
+        except Exception:
+            pass
+        return await handle_bypass_redirect(destination_url, db)
     
     cookie_session_id = request.cookies.get("session_id")
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")
     
-    # Check expiration
     if time.time() - session["created_at"] > 300 or time.time() > session.get("expires_at", session["created_at"] + 300):
         if user_id:
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
-        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
-        return bypass_detected_response()
+            try:
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, short_id, "Expired verification session", request, db)
+            except Exception:
+                pass
+        try:
+            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        except Exception:
+            pass
+        return await handle_bypass_redirect(destination_url, db)
     
-    # Check if already consumed
     if session.get("consumed", False) or session.get("status") in ["verified", "expired"]:
         if user_id:
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, "Token already used", request, db)
-        return bypass_detected_response()
+            try:
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, short_id, "Token already used", request, db)
+            except Exception:
+                pass
+        return await handle_bypass_redirect(destination_url, db)
     
-    # Validate session
     cookie_valid = cookie_session_id and cookie_session_id == session["session_id"]
     fallback_valid = (not cookie_session_id) and (session["client_ip"] == client_ip) and (session["user_agent"] == user_agent)
     
     if not (cookie_valid or fallback_valid):
         reason = "Session validation failed"
         if user_id:
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, reason, request, db)
-        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
-        return bypass_detected_response()
+            try:
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, short_id, reason, request, db)
+            except Exception:
+                pass
+        try:
+            await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        except Exception:
+            pass
+        return await handle_bypass_redirect(destination_url, db)
     
-    # Consume token
-    result = await db.sessions.update_one(
-        {"_id": session["_id"], "consumed": False},
-        {"$set": {"consumed": True}}
-    )
-    if result.modified_count == 0:
-        if user_id:
-            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
-            await send_bypass_notification(user_id, short_id, "Token already used", request, db)
-        return bypass_detected_response()
+    try:
+        result = await db.sessions.update_one(
+            {"_id": session["_id"], "consumed": False},
+            {"$set": {"consumed": True}}
+        )
+        if result.modified_count == 0:
+            if user_id:
+                await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+                await send_bypass_notification(user_id, short_id, "Token already used", request, db)
+            return await handle_bypass_redirect(destination_url, db)
+    except Exception as e:
+        logger.error(f"DB error updating session state: {e}")
+        return await handle_bypass_redirect(destination_url, db)
     
-    destination_url = session["original_url"]
-    
-    # Check if browser
     accept_header = request.headers.get("accept", "").lower()
     user_agent_lower = user_agent.lower()
     is_browser = "text/html" in accept_header and "test-agent" not in user_agent_lower and "pytest" not in user_agent_lower
@@ -1006,30 +739,34 @@ async def continue_endpoint(
         session_hash_input = f"{client_ip}:{user_agent}:{salt_hash}"
         session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()
         
-        await db.redirects.insert_one({
-            "redirect_id": redirect_id,
-            "target_url": destination_url,
-            "created_at": time.time(),
-            "expires_at": time.time() + 120,
-            "consumed": False,
-            "status": "unused",
-            "client_ip": client_ip,
-            "session_hash": session_hash,
-            "salt": salt_hash,
-            "user_agent": user_agent,
-            "session_id": cookie_session_id or session.get("session_id"),
-            "tab_token": tab_token,
-            "nonce": gateway_nonce,
-            "user_id": str(user_id) if user_id else None,
-            "short_id": short_id,
-            "mode": session.get("mode", "NORMAL"),
-            "manual_min_seconds": session.get("manual_min_seconds"),
-            "manual_max_seconds": session.get("manual_max_seconds"),
-            "session_start_time": session.get("created_at")
-        })
+        try:
+            await db.redirects.insert_one({
+                "redirect_id": redirect_id,
+                "target_url": destination_url,
+                "created_at": time.time(),
+                "expires_at": time.time() + 120,
+                "consumed": False,
+                "status": "unused",
+                "client_ip": client_ip,
+                "session_hash": session_hash,
+                "salt": salt_hash,
+                "user_agent": user_agent,
+                "session_id": cookie_session_id or session.get("session_id"),
+                "tab_token": tab_token,
+                "nonce": gateway_nonce,
+                "user_id": str(user_id) if user_id else None,
+                "short_id": short_id,
+                "mode": session.get("mode", "NORMAL"),
+                "manual_min_seconds": session.get("manual_min_seconds"),
+                "manual_max_seconds": session.get("manual_max_seconds"),
+                "session_start_time": session.get("created_at")
+            })
+        except Exception as e:
+            logger.error(f"DB error inserting redirect in continue: {e}")
         
+        gateway_template = load_template("gateway.html")
         html_content = (
-            GATEWAY_TEMPLATE
+            gateway_template
             .replace("{redirect_id}", redirect_id)
             .replace("{tab_token}", tab_token)
             .replace("{nonce}", gateway_nonce)
@@ -1045,20 +782,30 @@ async def redirect_endpoint(
     db = Depends(get_database)
 ):
     """Final redirect endpoint"""
-    redirect_doc = await db.redirects.find_one({"redirect_id": id})
+    if db is None:
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
+
+    try:
+        redirect_doc = await db.redirects.find_one({"redirect_id": id})
+    except Exception as e:
+        logger.error(f"DB error in redirect: {e}")
+        redirect_doc = None
+
     if not redirect_doc:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(DEFAULT_TARGET_URL, db)
     
-    target_url = redirect_doc.get("target_url")
+    target_url = redirect_doc.get("target_url", DEFAULT_TARGET_URL)
     
     if redirect_doc.get("consumed", False) or redirect_doc.get("status") in ["verified", "expired"]:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
     if time.time() - redirect_doc["created_at"] > 120 or time.time() > redirect_doc.get("expires_at", redirect_doc["created_at"] + 120):
-        await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
-        return bypass_detected_response()
+        try:
+            await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        except Exception:
+            pass
+        return await handle_bypass_redirect(target_url, db)
     
-    # Manual mode timer check
     if redirect_doc.get("mode") == "MANUAL":
         min_s = redirect_doc.get("manual_min_seconds")
         max_s = redirect_doc.get("manual_max_seconds")
@@ -1066,16 +813,17 @@ async def redirect_endpoint(
             start_t = redirect_doc.get("session_start_time", redirect_doc["created_at"])
             elapsed = time.time() - start_t
             if elapsed < min_s or elapsed > max_s:
-                await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
-                return bypass_detected_response()
+                try:
+                    await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+                except Exception:
+                    pass
+                return await handle_bypass_redirect(target_url, db)
     
-    # Nonce validation
     expected_nonce = redirect_doc.get("nonce")
     nonce_param = request.query_params.get("nonce")
     if expected_nonce and nonce_param and expected_nonce != nonce_param:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
-    # Session integrity check
     session_hash = redirect_doc.get("session_hash")
     salt = redirect_doc.get("salt")
     if session_hash and salt:
@@ -1084,29 +832,114 @@ async def redirect_endpoint(
         expected_input = f"{client_ip}:{normalized_ua}:{salt}"
         expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
         if session_hash != expected_hash:
-            return bypass_detected_response()
+            return await handle_bypass_redirect(target_url, db)
     
-    # Same-session validation
     expected_session_id = redirect_doc.get("session_id")
     cookie_session_id = request.cookies.get("session_id")
     if expected_session_id and expected_session_id != cookie_session_id:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
-    # Same-tab validation
     expected_tab_token = redirect_doc.get("tab_token")
     tab_param = request.query_params.get("tab")
     if expected_tab_token and expected_tab_token != tab_param:
-        return bypass_detected_response()
+        return await handle_bypass_redirect(target_url, db)
     
-    # Atomically mark as consumed
-    result = await db.redirects.update_one(
-        {"_id": redirect_doc["_id"], "consumed": False},
-        {"$set": {"consumed": True, "status": "verified"}}
-    )
-    if result.modified_count == 0:
-        return bypass_detected_response()
+    try:
+        result = await db.redirects.update_one(
+            {"_id": redirect_doc["_id"], "consumed": False},
+            {"$set": {"consumed": True, "status": "verified"}}
+        )
+        if result.modified_count == 0:
+            return await handle_bypass_redirect(target_url, db)
+    except Exception as e:
+        logger.error(f"DB error updating redirect state: {e}")
+        return await handle_bypass_redirect(target_url, db)
     
-    return RedirectResponse(url=redirect_doc["target_url"], status_code=302)
+    return RedirectResponse(url=target_url, status_code=302)
+
+@app.post("/redirect")
+@app.post("/api/verify-redirect")
+async def redirect_post_endpoint(
+    request: Request,
+    body: dict = Body(...),
+    db = Depends(get_database)
+):
+    redirect_id = body.get("id")
+    if not redirect_id:
+        raise HTTPException(status_code=400, detail="Missing redirect ID")
+
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database disconnected")
+
+    try:
+        redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
+    except Exception as e:
+        logger.error(f"DB error in redirect POST: {e}")
+        redirect_doc = None
+
+    if not redirect_doc:
+        raise HTTPException(status_code=404, detail="Redirect not found")
+
+    if redirect_doc.get("consumed", False) or redirect_doc.get("status") in ["verified", "expired"]:
+        raise HTTPException(status_code=410, detail="Redirect already consumed")
+
+    if time.time() - redirect_doc["created_at"] > 120 or time.time() > redirect_doc.get("expires_at", redirect_doc["created_at"] + 120):
+        try:
+            await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+        except Exception:
+            pass
+        raise HTTPException(status_code=410, detail="Redirect expired")
+
+    if redirect_doc.get("mode") == "MANUAL":
+        min_s = redirect_doc.get("manual_min_seconds")
+        max_s = redirect_doc.get("manual_max_seconds")
+        if min_s is not None and max_s is not None:
+            start_t = redirect_doc.get("session_start_time", redirect_doc["created_at"])
+            elapsed = time.time() - start_t
+            if elapsed < min_s or elapsed > max_s:
+                try:
+                    await db.redirects.update_one({"_id": redirect_doc["_id"]}, {"$set": {"consumed": True, "status": "expired"}})
+                except Exception:
+                    pass
+                raise HTTPException(status_code=410, detail="Verification expired")
+
+    expected_nonce = redirect_doc.get("nonce")
+    nonce_param = body.get("nonce")
+    if expected_nonce and nonce_param and expected_nonce != nonce_param:
+        raise HTTPException(status_code=403, detail="Nonce verification failed")
+
+    session_hash = redirect_doc.get("session_hash")
+    salt = redirect_doc.get("salt")
+    if session_hash and salt:
+        normalized_ua = request.headers.get("user-agent", "").strip()
+        client_ip = get_client_ip(request)
+        expected_input = f"{client_ip}:{normalized_ua}:{salt}"
+        expected_hash = hashlib.sha256(expected_input.encode()).hexdigest()
+        if session_hash != expected_hash:
+            raise HTTPException(status_code=403, detail="Session verification failed")
+
+    expected_session_id = redirect_doc.get("session_id")
+    cookie_session_id = request.cookies.get("session_id")
+    if expected_session_id and expected_session_id != cookie_session_id:
+        raise HTTPException(status_code=403, detail="Session verification failed")
+
+    expected_tab_token = redirect_doc.get("tab_token")
+    tab_param = body.get("tab")
+    if expected_tab_token and expected_tab_token != tab_param:
+        raise HTTPException(status_code=403, detail="Tab security violation")
+
+    try:
+        result = await db.redirects.update_one(
+            {"_id": redirect_doc["_id"], "consumed": False},
+            {"$set": {"consumed": True, "status": "verified"}}
+        )
+        if result.modified_count == 0:
+            raise HTTPException(status_code=410, detail="Redirect already consumed")
+    except Exception as e:
+        logger.error(f"DB error updating POST redirect: {e}")
+        raise HTTPException(status_code=500, detail="Database error")
+
+    return {"status": "success", "destination": redirect_doc["target_url"]}
 
 @app.post("/report-violation")
 async def report_violation_endpoint(
@@ -1120,46 +953,180 @@ async def report_violation_endpoint(
     if not redirect_id:
         raise HTTPException(status_code=400, detail="Missing redirect ID")
     
-    redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
+    if db is None:
+        return {"status": "error", "message": "Database disconnected"}
+
+    try:
+        redirect_doc = await db.redirects.find_one({"redirect_id": redirect_id})
+    except Exception as e:
+        logger.error(f"DB error in report_violation: {e}")
+        redirect_doc = None
+
     if not redirect_doc:
         return {"status": "error", "message": "Redirect not found"}
     
-    await db.redirects.update_one(
-        {"_id": redirect_doc["_id"]},
-        {"$set": {"consumed": True}}
-    )
+    try:
+        await db.redirects.update_one(
+            {"_id": redirect_doc["_id"]},
+            {"$set": {"consumed": True}}
+        )
+    except Exception:
+        pass
     
     user_id_str = redirect_doc.get("user_id")
     short_id = redirect_doc.get("short_id", "unknown")
     session_id = redirect_doc.get("session_id")
     
     if session_id:
-        session_doc = await db.sessions.find_one({"session_id": session_id})
-        if session_doc:
-            await db.sessions.update_one(
-                {"_id": session_doc["_id"]},
-                {"$set": {"consumed": True}}
-            )
-            if not user_id_str:
-                user_id_str = session_doc.get("user_id")
-            if short_id == "unknown":
-                short_id = session_doc.get("short_id", "unknown")
+        try:
+            session_doc = await db.sessions.find_one({"session_id": session_id})
+            if session_doc:
+                await db.sessions.update_one(
+                    {"_id": session_doc["_id"]},
+                    {"$set": {"consumed": True}}
+                )
+                if not user_id_str:
+                    user_id_str = session_doc.get("user_id")
+                if short_id == "unknown":
+                    short_id = session_doc.get("short_id", "unknown")
+        except Exception:
+            pass
     
     if user_id_str:
-        user_id = ObjectId(user_id_str)
+        try:
+            user_id = ObjectId(user_id_str)
+            await db.users.update_one(
+                {"_id": user_id},
+                {"$inc": {"blocked_count": 1}}
+            )
+            await send_bypass_notification(
+                user_id,
+                short_id,
+                f"Instant Client Violation: {reason}",
+                request,
+                db
+            )
+        except Exception:
+            pass
+
+    return {"status": "success"}
+
+@app.get("/{short_id}")
+async def original_shortlink(
+    request: Request,
+    short_id: str,
+    db = Depends(get_database)
+):
+    if short_id in ["health", "continue", "redirect", "verify", "blocked", "generate", "report-violation"]:
+        raise HTTPException(status_code=404)
+
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database disconnected")
+
+    try:
+        link = await db.protected_links.find_one({"short_id": short_id})
+    except Exception as e:
+        logger.error(f"DB error in shortlink: {e}")
+        link = None
+
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    user_id = ObjectId(link['user_id'])
+    try:
+        user = await db.users.find_one({"_id": user_id})
+    except Exception:
+        user = None
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    client_ip = get_client_ip(request)
+    user_agent = request.headers.get("user-agent", "")
+    referer = request.headers.get("referer", "")
+    original_target = link.get("original_url", DEFAULT_TARGET_URL)
+
+    is_bypass, bypass_reason = await detect_userscript_bypass(request, db)
+
+    if is_bypass:
+        try:
+            await db.users.update_one({"_id": user_id}, {"$inc": {"blocked_count": 1}})
+            await send_bypass_notification(user_id, short_id, f"Userscript / Bypass Tool detected ({bypass_reason})", request, db)
+        except Exception:
+            pass
+        return await handle_bypass_redirect(original_target, db)
+
+    shortener_base_url = link.get("shortener_base_url") or user.get("config", {}).get("base_url")
+
+    if shortener_base_url:
+        if not is_valid_shortener_referer(referer, shortener_base_url):
+            ref_str = referer if referer else "Missing"
+            shortener_domain = urlparse(shortener_base_url).netloc or shortener_base_url
+            reason = f"Bypass detected: Missing or invalid Referer (expected '{shortener_domain}', got '{ref_str}')"
+
+            try:
+                await db.users.update_one(
+                    {"_id": user_id},
+                    {"$inc": {"blocked_count": 1, "referer_failures": 1}}
+                )
+                await send_bypass_notification(user_id, short_id, reason, request, db)
+            except Exception:
+                pass
+            return await handle_bypass_redirect(original_target, db)
+
+    session_id = secrets.token_urlsafe(32)
+    token = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(16)
+    timestamp = time.time()
+
+    session_doc = {
+        "session_id": session_id,
+        "token": token,
+        "nonce": nonce,
+        "short_id": short_id,
+        "original_url": link["original_url"],
+        "user_id": str(user_id),
+        "client_ip": client_ip,
+        "user_agent": user_agent,
+        "created_at": timestamp,
+        "expires_at": timestamp + 300,
+        "status": "unused",
+        "verified": True,
+        "consumed": False,
+        "referer": referer,
+        "mode": link.get("mode", "NORMAL"),
+        "manual_min_seconds": link.get("manual_min_seconds"),
+        "manual_max_seconds": link.get("manual_max_seconds")
+    }
+
+    try:
+        await db.sessions.insert_one(session_doc)
         await db.users.update_one(
             {"_id": user_id},
-            {"$inc": {"blocked_count": 1}}
+            {
+                "$inc": {"success_count": 1},
+                "$set": {
+                    "last_success": timestamp,
+                    "last_ip": client_ip,
+                    "last_user_agent": user_agent
+                }
+            }
         )
-        await send_bypass_notification(
-            user_id,
-            short_id,
-            f"Instant Client Violation: {reason}",
-            request,
-            db
-        )
-    
-    return {"status": "success"}
+    except Exception as e:
+        logger.error(f"DB error creating session in shortlink: {e}")
+
+    response = RedirectResponse(url=f"/continue?token={token}", status_code=302)
+    is_secure = request.url.scheme == "https"
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        secure=is_secure,
+        samesite="lax",
+        path="/",
+        max_age=120
+    )
+    return response
 
 # =====================================================
 # Health Check
@@ -1170,7 +1137,7 @@ async def health_check():
     return {"status": "ok"}
 
 # =====================================================
-# Example: Generate Secure URL (Utility)
+# Utility: Generate Secure URL
 # =====================================================
 
 @app.get("/generate")
@@ -1184,4 +1151,4 @@ async def generate_secure_url(
         "target": base64.urlsafe_b64encode(url.encode('utf-8')).decode('utf-8'),
         "hash": generate_hmac_hash(url)[0],
         "salt": generate_hmac_hash(url)[1]
-}
+    }
