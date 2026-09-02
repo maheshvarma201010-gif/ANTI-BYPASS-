@@ -309,15 +309,12 @@
             } catch(e) {}
 
             function detectUserscriptGlobals() {
-                return (typeof GM_info !== 'undefined') ||
-                       (typeof GM !== 'undefined') ||
-                       (window.GM_info) ||
-                       (window.GM_xmlhttpRequest) ||
-                       (window.GM) ||
-                       (window.unsafeWindow && window.unsafeWindow !== window) ||
-                       (typeof GM_setValue !== 'undefined') ||
-                       (typeof GM_getValue !== 'undefined') ||
-                       (typeof GM_registerMenuCommand !== 'undefined');
+                try {
+                    if (typeof GM_info !== 'undefined' && GM_info && (GM_info.script || GM_info.scriptHandler)) return true;
+                    if (typeof GM_xmlhttpRequest === 'function' || typeof GM_setValue === 'function' || typeof GM_getValue === 'function' || typeof GM_registerMenuCommand === 'function') return true;
+                    if (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function') return true;
+                } catch(e) {}
+                return false;
             }
 
             if (detectUserscriptGlobals()) {
